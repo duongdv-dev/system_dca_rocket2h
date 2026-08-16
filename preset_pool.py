@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 from alpha_engine import AlphaEngine
 from dca_engine import DCAEngine
