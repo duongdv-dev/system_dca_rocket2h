@@ -62,32 +62,33 @@ int OnInit()
 {
    m_trade.SetExpertMagicNumber(InpMagicNumber);
    
-   // 1. Khởi tạo danh mục Preset
+   // 1. Khởi tạo danh mục Preset An Toàn Cho Vàng (XAUUSD)
    // Preset 0: No-Trade
    m_presets[0].name = "No-Trade";
-   // Preset 1: Lưới Hẹp (Narrow)
-   m_presets[1].name = "Lưới Hẹp (Narrow)";
-   m_presets[1].step_0_ratio = 0.8;
-   m_presets[1].step_exp = 1.0;
-   m_presets[1].max_orders = 3;
-   m_presets[1].multiplier = 1.0;
-   m_presets[1].tp_be_ratio = 0.4;
+   
+   // Preset 1: Lưới Nhanh (Aggressive)
+   m_presets[1].name = "Lưới Nhanh (Aggressive)";
+   m_presets[1].step_0_ratio = 1.2;
+   m_presets[1].step_exp = 1.1;
+   m_presets[1].max_orders = 4;
+   m_presets[1].multiplier = 1.2;
+   m_presets[1].tp_be_ratio = 0.5;
    
    // Preset 2: Tiêu Chuẩn (Standard)
    m_presets[2].name = "Tiêu Chuẩn (Standard)";
-   m_presets[2].step_0_ratio = 1.0;
-   m_presets[2].step_exp = 1.1;
-   m_presets[2].max_orders = 4;
+   m_presets[2].step_0_ratio = 1.5;
+   m_presets[2].step_exp = 1.2;
+   m_presets[2].max_orders = 5;
    m_presets[2].multiplier = 1.3;
-   m_presets[2].tp_be_ratio = 0.55;
+   m_presets[2].tp_be_ratio = 0.65;
 
    // Preset 3: Phòng Thủ (Defensive)
    m_presets[3].name = "Phòng Thủ (Defensive)";
-   m_presets[3].step_0_ratio = 1.2;
-   m_presets[3].step_exp = 1.2;
-   m_presets[3].max_orders = 5;
+   m_presets[3].step_0_ratio = 1.8;
+   m_presets[3].step_exp = 1.3;
+   m_presets[3].max_orders = 6;
    m_presets[3].multiplier = 1.5;
-   m_presets[3].tp_be_ratio = 0.7;
+   m_presets[3].tp_be_ratio = 0.8;
 
    // 2. Tải và Khởi tạo Native ONNX Model từ Resource Buffer
    if(!InitONNXModel())

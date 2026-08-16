@@ -1,22 +1,22 @@
 """
 v2_system/grid_simulator.py
 ===========================
-Engine Mô Phỏng 72 Kịch Bản Grid/DCA và Gán Nhãn Cho Tập Train.
+Engine Mô Phỏng 72 Kịch Bản Grid/DCA và Gán Nhãn Cho Tập Train (v2 - Fixed & Robust).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
-1. Tạo không gian 72 kịch bản tham số (Grid Search):
-   - Step_0: [0.8x, 1.2x ATR]
-   - Step_Exp: [1.0, 1.2]
-   - Max_Orders: [3, 4, 5, 6] (hoặc [3, 4, 5])
-   - Multiplier: [1.0, 1.3, 1.5]
-   - TP_BE: [0.4x, 0.7x ATR]
+1. Tạo không gian kịch bản tham số chuẩn hóa an toàn cho XAUUSD (Mean Reversion):
+   - Step_0: [1.2x, 1.6x ATR] (Lưới đủ rộng chống trượt giá)
+   - Step_Exp: [1.1, 1.3] (Mở rộng khoảng cách lưới theo cấp số nhân)
+   - Max_Orders: [4, 5, 6] (Số tầng lệnh tối ưu)
+   - Multiplier: [1.2, 1.5] (Martingale kiểm soát)
+   - TP_BE: [0.5x, 0.8x ATR] (TP hợp lý che phủ spread & drawdown)
 2. Chạy mô phỏng từng kịch bản trên nến M1 (10:00 - 12:00 VN) cho từng ngày.
-3. Chấm điểm kịch bản theo Fitness Function:
-   Score = Net_Profit - (2.0 * Max_Drawdown) - (Penalty_500 nếu kẹt lệnh lúc 12:00).
+3. Chấm điểm kịch bản theo Fitness Function nghiêm ngặt:
+   Score = Net_Profit - (2.5 * Max_Drawdown) - (Penalty_500 nếu kẹt lệnh lúc 12:00).
 4. Gán nhãn ngày:
-   - Nếu best Score <= 0 -> Class 0 (No-Trade).
-   - Nếu best Score > 0 -> Lưu bộ tham số tốt nhất.
+   - Chỉ gán nhãn có lãi khi Score > 20.0 và hit TP trước 12:00.
+   - Nếu không thỏa mãn -> Class 0 (No-Trade).
 """
 
 import itertools
@@ -34,14 +34,14 @@ class GridSimulator:
     @staticmethod
     def generate_parameter_grid() -> List[Dict[str, float]]:
         """
-        Tạo danh sách các bộ tham số kịch bản grid.
-        2 * 2 * 3 * 3 * 2 = 72 kịch bản tham số tiêu chuẩn.
+        Tạo danh sách các bộ tham số kịch bản grid an toàn cho Vàng (XAUUSD).
+        3 * 2 * 3 * 2 * 2 = 72 kịch bản tham số tiêu chuẩn.
         """
-        step_0_ratios = [0.8, 1.2]
-        step_exps = [1.0, 1.2]
-        max_orders_list = [3, 4, 5]  # 3 options -> 2 * 2 * 3 * 3 * 2 = 72 scenarios
-        multipliers = [1.0, 1.3, 1.5]
-        tp_be_ratios = [0.4, 0.7]
+        step_0_ratios = [1.2, 1.5, 1.8]
+        step_exps = [1.1, 1.3]
+        max_orders_list = [4, 5, 6]
+        multipliers = [1.2, 1.5]
+        tp_be_ratios = [0.5, 0.8]
 
         grid = []
         for s0, se, mo, mult, tp in itertools.product(step_0_ratios, step_exps, max_orders_list, multipliers, tp_be_ratios):
@@ -65,14 +65,6 @@ class GridSimulator:
     ) -> Dict[str, Any]:
         """
         Mô phỏng chi tiết 1 kịch bản trên nến M1 từ 10:00 đến 12:00.
-        
-        :param exec_m1: DataFrame nến M1 trong khung 10:00 - 12:00 (chứa open, high, low, close)
-        :param atr_14: ATR M15 tính lúc 09:59
-        :param close_0959: Giá đóng cửa 09:59
-        :param daily_vwap: VWAP phiên sáng
-        :param params: Bộ tham số grid (step_0_ratio, step_exp, max_orders, multiplier, tp_be_ratio)
-        :param base_lot: Kích thước lot cơ sở
-        :return: Dict chứa kết quả (net_profit, max_drawdown, hit_tp, unclosed_at_12, fitness_score)
         """
         step_0 = params['step_0_ratio'] * atr_14
         step_exp = params['step_exp']
@@ -80,56 +72,39 @@ class GridSimulator:
         multiplier = params['multiplier']
         tp_be_dist = params['tp_be_ratio'] * atr_14
 
-        # Xác định hướng giao dịch theo Mean-Reversion:
-        # Nếu giá 09:59 nằm trên VWAP -> Đang cao -> Đặt SELL kỳ vọng hồi về
-        # Nếu giá 09:59 nằm dưới VWAP -> Đang thấp -> Đặt BUY kỳ vọng hồi về
-        direction = -1 if close_0959 >= daily_vwap else 1  # 1: BUY, -1: SELL
+        # Xác định hướng giao dịch Mean-Reversion
+        direction = -1 if close_0959 >= daily_vwap else 1
 
-        # Tính trước mức giá và khối lượng cho tối đa max_orders lệnh
-        # Order 1 khớp ngay tại Open nến 10:00
         orders_placed = []
-        
-        # Mở lệnh 1 tại nến 10:00 Open
         price_1 = exec_m1['open'].iloc[0]
         orders_placed.append({'price': price_1, 'lot': base_lot})
 
-        # Danh sách khoảng cách các lệnh tiếp theo
-        # Lệnh k (k>=2) cách lệnh k-1 một khoảng Step_{k-2}
         step_distances = [step_0 * (step_exp ** (i - 1)) for i in range(max_orders - 1)]
 
-        # Mức giá kích hoạt cho các lệnh tiếp theo (nếu giá đi ngược)
         next_trigger_prices = []
         curr_price = price_1
         for dist in step_distances:
-            if direction == 1:  # BUY -> Đi ngược là giá giảm
+            if direction == 1:
                 curr_price = curr_price - dist
-            else:  # SELL -> Đi ngược là giá tăng
+            else:
                 curr_price = curr_price + dist
             next_trigger_prices.append(curr_price)
 
-        next_order_idx = 0  # Chỉ số của lệnh tiếp theo chờ kích hoạt (trong next_trigger_prices)
-
-        # Trạng thái trong phiên
+        next_order_idx = 0
         closed = False
         hit_tp = False
         net_profit = 0.0
         max_drawdown = 0.0
-        peak_equity = 0.0
 
-        # Lặp qua từng nến M1 (10:00 - 12:00)
         for t, row in exec_m1.iterrows():
             high_t = row['high']
             low_t = row['low']
             close_t = row['close']
 
-            # 1. Kiểm tra kích hoạt lệnh mới (nếu chưa đạt max_orders)
+            # 1. Trigger lệnh mới
             while next_order_idx < len(next_trigger_prices):
                 trig_p = next_trigger_prices[next_order_idx]
-                triggered = False
-                if direction == 1 and low_t <= trig_p:  # BUY trigger khi Low <= Target
-                    triggered = True
-                elif direction == -1 and high_t >= trig_p:  # SELL trigger khi High >= Target
-                    triggered = True
+                triggered = (direction == 1 and low_t <= trig_p) or (direction == -1 and high_t >= trig_p)
 
                 if triggered:
                     lot_k = base_lot * (multiplier ** (next_order_idx + 1))
@@ -138,54 +113,35 @@ class GridSimulator:
                 else:
                     break
 
-            # 2. Tính giá hòa vốn Breakeven (BE) hiện tại
+            # 2. Tính giá Breakeven (BE)
             total_lot = sum(o['lot'] for o in orders_placed)
             price_be = sum(o['lot'] * o['price'] for o in orders_placed) / total_lot
 
-            # 3. Tính giá Take Profit (TP) hiện tại
-            if direction == 1:
-                tp_price = price_be + tp_be_dist
-            else:
-                tp_price = price_be - tp_be_dist
+            # 3. Tính giá Take Profit (TP)
+            tp_price = price_be + tp_be_dist if direction == 1 else price_be - tp_be_dist
 
-            # 4. Kiểm tra cắn TP trong nến M1 này
-            if direction == 1 and high_t >= tp_price:
-                # Khớp TP lệnh BUY
+            # 4. Kiểm tra khớp TP
+            if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
                 hit_tp = True
                 closed = True
-                net_profit = sum(o['lot'] * (tp_price - o['price']) for o in orders_placed) * self.contract_size
-                break
-            elif direction == -1 and low_t <= tp_price:
-                # Khớp TP lệnh SELL
-                hit_tp = True
-                closed = True
-                net_profit = sum(o['lot'] * (o['price'] - tp_price) for o in orders_placed) * self.contract_size
+                net_profit = sum(o['lot'] * (tp_price - o['price'] if direction == 1 else o['price'] - tp_price) for o in orders_placed) * self.contract_size
                 break
 
-            # 5. Cập nhật Floating PnL & Max Drawdown tại Close nến t
-            if direction == 1:
-                floating_pnl = sum(o['lot'] * (close_t - o['price']) for o in orders_placed) * self.contract_size
-            else:
-                floating_pnl = sum(o['lot'] * (o['price'] - close_t) for o in orders_placed) * self.contract_size
-
-            # Drawdown là mức lỗ trạng thái lớn nhất
+            # 5. Cập nhật Floating Drawdown
+            floating_pnl = sum(o['lot'] * (close_t - o['price'] if direction == 1 else o['price'] - close_t) for o in orders_placed) * self.contract_size
             if floating_pnl < 0:
                 max_drawdown = max(max_drawdown, abs(floating_pnl))
 
-        # 6. Xử lý kẹt lệnh đến 12:00:00 (Chưa cắn TP)
+        # 6. Xử lý kẹt lệnh đến 12:00:00
         unclosed_at_12 = False
         if not closed:
             unclosed_at_12 = True
             final_close = exec_m1['close'].iloc[-1]
-            if direction == 1:
-                net_profit = sum(o['lot'] * (final_close - o['price']) for o in orders_placed) * self.contract_size
-            else:
-                net_profit = sum(o['lot'] * (o['price'] - final_close) for o in orders_placed) * self.contract_size
+            net_profit = sum(o['lot'] * (final_close - o['price'] if direction == 1 else o['price'] - final_close) for o in orders_placed) * self.contract_size
 
-        # 7. Tính Fitness Score
-        # Score = Net_Profit - 2.0 * Max_Drawdown - (500 nếu kẹt lệnh tới 12:00)
+        # 7. Tính Fitness Score (Yêu cầu khắt khe hơn)
         penalty = 500.0 if unclosed_at_12 else 0.0
-        fitness_score = net_profit - (2.0 * max_drawdown) - penalty
+        fitness_score = net_profit - (2.5 * max_drawdown) - penalty
 
         return {
             'net_profit': net_profit,
@@ -202,12 +158,10 @@ class GridSimulator:
         daily_m1_dict: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]]
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Mô phỏng 72 kịch bản cho tất cả các ngày trong tập Train (2020-2023).
-        
-        :return: (labeled_df, best_params_df)
+        Mô phỏng các kịch bản cho tập Train (2020-2023).
         """
         param_grid = GridSimulator.generate_parameter_grid()
-        print(f"[GridSimulator] Khởi tạo {len(param_grid)} kịch bản tham số...")
+        print(f"[GridSimulator] Khởi tạo {len(param_grid)} kịch bản tham số an toàn...")
 
         labeled_records = []
         best_params_records = []
@@ -222,6 +176,24 @@ class GridSimulator:
             close_0959 = row['close_0959']
             daily_vwap = row['daily_vwap']
 
+            # Lọc các ngày xu hướng quá mạnh sáng (tránh cản tàu)
+            bb_zscore = row['bb_zscore_m15']
+            momentum = row['morning_momentum']
+            if abs(bb_zscore) > 2.5 or momentum > 0.8:
+                # Ngày bùng nổ xu hướng sáng -> Đánh dấu No-Trade
+                rec = row.to_dict()
+                rec['best_fitness_score'] = -100.0
+                rec['is_profitable'] = 0
+                rec['step_0_ratio'] = np.nan
+                rec['step_exp'] = np.nan
+                rec['max_orders'] = np.nan
+                rec['multiplier'] = np.nan
+                rec['tp_be_ratio'] = np.nan
+                rec['net_profit'] = 0.0
+                rec['max_drawdown'] = 0.0
+                labeled_records.append(rec)
+                continue
+
             best_score = -float('inf')
             best_param = None
             best_res = None
@@ -233,14 +205,15 @@ class GridSimulator:
                     best_param = p
                     best_res = res
 
-            # Gán nhãn:
-            # Score <= 0 -> 0 (No-Trade)
-            # Score > 0 -> Sẽ được gom cụm K-Means ở bước tiếp theo
+            # Điều kiện nghiêm ngặt để coi 1 ngày là có lãi chất lượng cao:
+            # Score > 20.0 VÀ hit TP trước 12:00
+            is_good_day = (best_score > 20.0) and (best_res is not None and best_res['hit_tp'])
+
             rec = row.to_dict()
             rec['best_fitness_score'] = best_score
-            rec['is_profitable'] = 1 if best_score > 0 else 0
+            rec['is_profitable'] = 1 if is_good_day else 0
 
-            if best_score > 0 and best_param is not None:
+            if is_good_day and best_param is not None:
                 rec['step_0_ratio'] = best_param['step_0_ratio']
                 rec['step_exp'] = best_param['step_exp']
                 rec['max_orders'] = best_param['max_orders']
@@ -264,6 +237,6 @@ class GridSimulator:
         best_params_df = pd.DataFrame(best_params_records)
         
         prof_count = (labeled_df['is_profitable'] == 1).sum()
-        print(f"[GridSimulator] Tổng số ngày train: {len(labeled_df)} | Ngày có kịch bản có lãi (>0 score): {prof_count}")
+        print(f"[GridSimulator] Tổng số ngày train: {len(labeled_df)} | Ngày có kịch bản chất lượng cao (>20 score & Hit TP): {prof_count}")
 
         return labeled_df, best_params_df

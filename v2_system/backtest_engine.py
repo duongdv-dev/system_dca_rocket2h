@@ -1,19 +1,17 @@
 """
 v2_system/backtest_engine.py
 =============================
-Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2).
+Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - Fixed & High Performance).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
 1. Chạy mô phỏng thực thi chi tiết trên dữ liệu nến M1 tập Test (2024-2025).
-2. Tích hợp 3 lớp quản trị rủi ro & vận hành sản xuất:
-   - Risk Engine: Khóa cứng rủi ro Max Loss <= 2% Balance cho mỗi phiên.
+2. Tích hợp 4 lớp quản trị rủi ro & vận hành sản xuất:
+   - Morning Trend Safety Filter: Bỏ qua các ngày xu hướng mở cửa quá mạnh.
+   - Dynamic Risk Engine: Khóa cứng rủi ro Max Loss <= 2% Balance cho mỗi phiên.
    - Time-Decay TP: Thu hẹp TP về sát Breakeven dần sau 11:30 VN.
    - Hard Exit: Cưỡng chế đóng 100% vị thế lúc 12:00:00.
-3. Xuất báo cáo hiệu năng đầy đủ đến console stdout (Stream Log trực tiếp, không tích lũy file rác):
-   - Win Rate, No-Trade %, Profit Factor, Max Drawdown %.
-   - Chi tiết hiệu năng từng Preset chiến thuật.
-   - Đường cong vốn (Equity Curve).
+3. Xuất báo cáo hiệu năng đầy đủ đến console stdout.
 """
 
 import os
@@ -74,6 +72,12 @@ class OOSBacktestEngine:
             atr_14 = row['atr_14_m15']
             close_0959 = row['close_0959']
             daily_vwap = row['daily_vwap']
+
+            # Bộ lọc bảo vệ xu hướng sáng: Nếu dải BB căng đét hoặc động lượng sáng cực đại -> Ép về No-Trade
+            bb_zscore = row['bb_zscore_m15']
+            momentum = row['morning_momentum']
+            if abs(bb_zscore) > 2.5 or momentum > 0.8:
+                pred_class = 0
 
             # Trường hợp 0: No-Trade
             if pred_class == 0:
