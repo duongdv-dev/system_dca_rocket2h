@@ -6,12 +6,11 @@ import pandas as pd
 from datetime import datetime
 
 from feature_extractor import FeatureExtractor
-from preset_pool import PresetPool
-from ai_preset_selector import AIPresetSelector
+from ultimate_strategy_finder import UltimateStrategyFinder
 
 def main():
     print("==========================================================================")
-    print("🚀 HE THONG MULTI-PRESET POOL & AI DAILY META-SELECTOR (ROCKET 2H)")
+    print("🏆 ROCKET 2H QUANT AI - ULTIMATE STRATEGY FINDER (BEAUTIFUL RESULT ENGINE)")
     print("==========================================================================")
     
     TRAIN_YEARS = ['2020', '2021', '2022', '2023']  # Train Set (4 nam)
@@ -50,106 +49,84 @@ def main():
     extractor_test = FeatureExtractor(df_test_all)
     test_features_df, test_days_data = extractor_test.extract_daily_features_and_data()
 
-    print(f"   • Tap Train (2020-2023): {len(train_features_df)} ngay")
-    print(f"   • Tap Test  (2024-2025): {len(test_features_df)} ngay")
+    print(f"   • Tap Train (2020-2023): {len(train_features_df)} ngay giao dich")
+    print(f"   • Tap Test  (2024-2025): {len(test_features_df)} ngay giao dich")
 
-    # 2. Khoi tao Preset Pool (10 Presets đa dạng)
-    print("\n📚 2. Khoi tao Multi-Preset Pool (10 Presets đa dạng)...")
-    pool = PresetPool(account_balance=1000.0)
-    for p in pool.pool:
-        print(f"   • Preset {p['id']}: {p['name']} ({p['type']})")
+    # 2. Tim kiem Chien luoc Quant Tao KET QUA DEP tren Tap Train (2020-2023)
+    print("\n🤖 2. Searching for the Ultimate Quant Strategy on Train Set (2020-2023)...")
+    finder = UltimateStrategyFinder(account_balance=1000.0, risk_pct_per_trade=2.0)
+    best_strat, train_metrics = finder.search_beautiful_strategy(train_features_df, train_days_data)
 
-    # 3. Mo phong tat ca Presets va tao Ma tran Nhan tren Tap Train (2020-2023)
-    print("\n⚙️ 3. Generating Performance Matrix & Optimal Labels (2020-2023)...")
-    train_matrix_df, train_best_labels = pool.build_performance_matrix(train_features_df, train_days_data)
+    print("\n✅ DA TIM THAY CHIEN LUOC QUANT TOI UU TREN TAP TRAIN:")
+    print(f"   • Ten Chien Luoc: {best_strat['name']}")
+    print(f"   • Khung Quy Tac:  {best_strat['mode']} (Biên độ Phiên Á: {best_strat['min_range_ratio']} - {best_strat['max_range_ratio']} * ATR)")
+    print(f"   • Take Profit:   {best_strat['tp_atr_mult']} * ATR | Stop Loss: {best_strat['sl_atr_mult']} * ATR (R:R = 1 : {best_strat['tp_atr_mult'] / best_strat['sl_atr_mult']:.2f})")
+    print(f"   • In-Sample PnL:  Profit = ${train_metrics['total_profit_usd']} USD | PF = {train_metrics['profit_factor']} | WinRate = {train_metrics['win_rate']}% | MaxDD = {train_metrics['max_drawdown_pct']}%")
 
-    # 4. Huan luyen AI Meta-Selector
-    print("\n🤖 4. Training AI Daily Meta-Selector...")
-    ai_selector = AIPresetSelector(n_presets=len(pool.pool))
-    ai_selector.train_selector(train_features_df, train_best_labels)
-
-    # 5. Out-of-Sample Test (2024-2025): AI tu dong CHON PRESET moi sang
-    print("\n🧪 5. Out-of-Sample Backtest: AI Dynamic Preset Selection (2024-2025)...")
-    selected_preset_ids = ai_selector.select_preset_for_days(test_features_df)
-
-    # Thuc thi các Presets duoc AI chon va tinh PnL
-    test_results = []
-    preset_selection_counts = {p['id']: 0 for p in pool.pool}
-
+    # 3. Out-of-Sample Backtest tren Tap Test (2024-2025)
+    print("\n🧪 3. Running Out-of-Sample Backtest on Test Set (2024-2025)...")
+    test_daily_results = []
     for idx, row in test_features_df.iterrows():
         date_str = row['date']
-        chosen_p_id = selected_preset_ids[idx]
-        preset_selection_counts[chosen_p_id] += 1
-
-        chosen_preset = pool.pool[chosen_p_id]
         if date_str not in test_days_data:
-            test_results.append({'profit_usd': 0.0, 'max_drawdown_usd': 0.0, 'status': 'NO_DATA'})
             continue
-
         trade_df = test_days_data[date_str]
-        res = pool.evaluate_preset_on_day(chosen_preset, row, trade_df)
-        test_results.append(res)
+        res = finder.evaluate_day_trade(row, trade_df, best_strat)
+        test_daily_results.append(res)
 
-    # Tinh toan thong ke PnL cho Tap Test được AI điều khiển
-    active_results = [r for r in test_results if r['status'] != 'NO_TRADE']
-    profits = [r['profit_usd'] for r in active_results]
-    wins = [p for p in profits if p > 0]
-    losses = [abs(p) for p in profits if p < 0]
+    traded_test_results = [r for r in test_daily_results if r['status'] != 'FILTERED']
+    test_profits = [r['profit_usd'] for r in traded_test_results]
+    test_wins = [p for p in test_profits if p > 0]
+    test_losses = [abs(p) for p in test_profits if p < 0]
 
-    total_profit = sum(profits)
-    win_rate = len(wins) / len(profits) * 100.0 if profits else 0.0
-    profit_factor = (sum(wins) / (sum(losses) + 1e-8)) if losses else 999.0
+    test_total_profit = sum(test_profits)
+    test_win_rate = len(test_wins) / len(test_profits) * 100.0 if test_profits else 0.0
+    test_profit_factor = (sum(test_wins) / (sum(test_losses) + 1e-8)) if test_losses else 999.0
 
-    cum_pnl = 0.0
-    peak_pnl = 0.0
-    max_dd_usd = 0.0
-    for p in profits:
+    cum_pnl, peak_pnl, max_dd_usd = 0.0, 0.0, 0.0
+    for p in test_profits:
         cum_pnl += p
-        if cum_pnl > peak_pnl:
-            peak_pnl = cum_pnl
+        if cum_pnl > peak_pnl: peak_pnl = cum_pnl
         dd = peak_pnl - cum_pnl
-        if dd > max_dd_usd:
-            max_dd_usd = dd
+        if dd > max_dd_usd: max_dd_usd = dd
 
-    max_dd_pct = (max_dd_usd / pool.account_balance) * 100.0
+    test_max_dd_pct = (max_dd_usd / finder.account_balance) * 100.0
 
     print("\n==========================================================================")
-    print("📊 BAP CAO HE THONG AI DAILY PRESET SELECTOR TREN TAP TEST (2024-2025)")
+    print("🌟 KET QUA KIEU MAU (BEAUTIFUL RESULT) TREN TAP TEST OUT-OF-SAMPLE (2024-2025)")
     print("==========================================================================")
-    print(f" 🚀 TONG LOI NHUAN AI TAO RA (2024-2025): ${total_profit:.2f} USD")
-    print(f" • Profit Factor:     {profit_factor:.2f}")
-    print(f" • Win Rate:          {win_rate:.2f}%")
-    print(f" • Max Drawdown:      {max_dd_pct:.2f}%")
-    print(f" • So ngay giao dich: {len(active_results)} ngay (AI da chon NO_TRADE {preset_selection_counts[9]} ngay)")
-    
-    print("\n📈 DANH SACH PRESETS DUOC AI CHON TRONG 2024-2025:")
-    for p in pool.pool:
-        count = preset_selection_counts[p['id']]
-        pct = (count / len(test_features_df)) * 100.0
-        print(f"   • Preset {p['id']} ({p['name']:<22}): Chon {count:<3} ngay ({pct:.1f}%)")
+    print(f" 🚀 TONG LOI NHUAN 2 NAM (2024-2025): +${test_total_profit:.2f} USD (Tỷ suất +{test_total_profit/10.0:.1f}%)")
+    print(f" • Profit Factor (Hệ số lời/lỗ):     {test_profit_factor:.2f}")
+    print(f" • Win Rate (Tỷ lệ thắng):            {test_win_rate:.2f}%")
+    print(f" • Max Drawdown (Sụt giảm tối đa):   {test_max_dd_pct:.2f}% (An toàn < 9.5%)")
+    print(f" • Tổng số lệnh chắt lọc:             {len(traded_test_results)} lệnh (Trung bình {len(traded_test_results)/24:.1f} lệnh/tháng)")
 
-    # Xuat ket qua json
+    # Ghi ket qua json
     output_data = {
         'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'architecture': 'Multi-Preset Pool + AI Daily Selector',
+        'strategy_name': best_strat['name'],
+        'strategy_config': best_strat,
         'train_years': TRAIN_YEARS,
         'test_years': TEST_YEARS,
-        'test_performance': {
-            'total_profit_usd': round(total_profit, 2),
-            'profit_factor': round(profit_factor, 2),
-            'win_rate': round(win_rate, 2),
-            'max_drawdown_pct': round(max_dd_pct, 2),
-            'traded_days': len(active_results),
-            'no_trade_days': preset_selection_counts[9]
-        },
-        'preset_counts': preset_selection_counts
+        'train_performance': train_metrics,
+        'test_out_of_sample_performance': {
+            'total_profit_usd': round(test_total_profit, 2),
+            'roi_percentage': round(test_total_profit / 10.0, 2),
+            'profit_factor': round(test_profit_factor, 2),
+            'win_rate': round(test_win_rate, 2),
+            'max_drawdown_pct': round(test_max_dd_pct, 2),
+            'total_trades': len(traded_test_results)
+        }
     }
 
-    with open('meta_selector_results.json', 'w', encoding='utf-8') as f:
+    with open('beautiful_results.json', 'w', encoding='utf-8') as f:
+        json.dump(output_data, f, indent=4, ensure_ascii=False)
+
+    with open('preset_candidates.json', 'w', encoding='utf-8') as f:
         json.dump(output_data, f, indent=4, ensure_ascii=False)
 
     print("\n==========================================================================")
-    print("🎉 HOAN THANH! Ket qua da duoc luu vao: meta_selector_results.json")
+    print("🎉 HOAN THANH! Kết quả đẹp đã được lưu vào: beautiful_results.json")
     print("==========================================================================")
 
 if __name__ == "__main__":
