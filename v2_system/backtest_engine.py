@@ -70,7 +70,7 @@ class OOSBacktestEngine:
             if date_str not in daily_m1_dict:
                 continue
 
-            obs_df, exec_df = daily_m1_dict[date_str]
+            obs_df, exec_m1 = daily_m1_dict[date_str]
             atr_14 = row['atr_14_m15']
             close_0959 = row['close_0959']
             daily_vwap = row['daily_vwap']
