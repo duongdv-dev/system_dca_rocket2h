@@ -17,6 +17,10 @@ import os
 import sys
 import glob
 import pandas as pd
+
+# Thêm đường dẫn thư mục hiện tại vào sys.path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from data_pipeline import DataPipeline
 from grid_simulator import GridSimulator
 from strategy_clustering import StrategyClustering

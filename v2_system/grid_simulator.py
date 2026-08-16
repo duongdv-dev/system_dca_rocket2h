@@ -31,7 +31,8 @@ class GridSimulator:
         """
         self.contract_size = contract_size
 
-    def generate_parameter_grid(() -> List[Dict[str, float]]:
+    @staticmethod
+    def generate_parameter_grid() -> List[Dict[str, float]]:
         """
         Tạo danh sách các bộ tham số kịch bản grid.
         2 * 2 * 3 * 3 * 2 = 72 kịch bản tham số tiêu chuẩn.
