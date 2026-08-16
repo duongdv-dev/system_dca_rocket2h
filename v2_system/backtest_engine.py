@@ -1,15 +1,15 @@
 """
 v2_system/backtest_engine.py
 =============================
-Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - Fixed & High Performance).
+Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - Alpha & Smart Exit).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
 1. Chạy mô phỏng thực thi chi tiết trên dữ liệu nến M1 tập Test (2024-2025).
 2. Tích hợp 4 lớp quản trị rủi ro & vận hành sản xuất:
-   - Morning Trend Safety Filter: Bỏ qua các ngày xu hướng mở cửa quá mạnh.
+   - VWAP Stretch & Morning Trend Filter: Chỉ trade khi giá 09:59 lệch xa VWAP (abs >= 0.5 ATR).
    - Dynamic Risk Engine: Khóa cứng rủi ro Max Loss <= 2% Balance cho mỗi phiên.
-   - Time-Decay TP: Thu hẹp TP về sát Breakeven dần sau 11:30 VN.
+   - Dynamic Smart Exit Engine: Chốt lời thu hẹp sau phút 75 (11:15 VN) & Đóng khi PnL > 0 / hòa vốn trước 12:00.
    - Hard Exit: Cưỡng chế đóng 100% vị thế lúc 12:00:00.
 3. Xuất báo cáo hiệu năng đầy đủ đến console stdout.
 """
@@ -28,12 +28,6 @@ class OOSBacktestEngine:
         risk_pct_per_session: float = 0.02,
         contract_size: float = 100.0
     ):
-        """
-        :param preset_centroids: Dictionary chứa tham số các preset {1: params, 2: params, 3: params}
-        :param initial_balance: Số dư tài khoản ban đầu ($)
-        :param risk_pct_per_session: Giới hạn rủi ro tối đa mỗi phiên (% balance)
-        :param contract_size: Kích thước hợp đồng (100 oz / lot)
-        """
         self.preset_centroids = preset_centroids
         self.initial_balance = initial_balance
         self.risk_pct_per_session = risk_pct_per_session
@@ -45,9 +39,6 @@ class OOSBacktestEngine:
         predictions: np.ndarray,
         daily_m1_dict: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]]
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-        """
-        Chạy mô phỏng Out-of-Sample cho từng ngày trong tập Test.
-        """
         current_balance = self.initial_balance
         equity_curve = [current_balance]
         daily_trades = []
@@ -58,7 +49,7 @@ class OOSBacktestEngine:
         print(f" • Vốn ban đầu:            ${self.initial_balance:,.2f}")
         print(f" • Khung giờ thực thi:      10:00 - 12:00 (Giờ Việt Nam, UTC+7)")
         print(f" • Dynamic Risk Engine:    Khóa cứng Max Loss <= {self.risk_pct_per_session*100:.1f}% Balance / phiên")
-        print(f" • Time-Decay TP Engine:   Thu hẹp TP sau 11:30 VN (phút 90 đến 120)")
+        print(f" • Smart Exit Engine:      Chốt lời linh hoạt sau phút 75 (11:15 VN)")
         print(f" • Hard Exit:              Đóng 100% vị thế tại 12:00:00 VN\n")
 
         for idx, row in test_feature_df.iterrows():
@@ -72,11 +63,11 @@ class OOSBacktestEngine:
             atr_14 = row['atr_14_m15']
             close_0959 = row['close_0959']
             daily_vwap = row['daily_vwap']
-
-            # Bộ lọc bảo vệ xu hướng sáng: Nếu dải BB căng đét hoặc động lượng sáng cực đại -> Ép về No-Trade
+            vwap_dist_atr = row['vwap_dist_atr']
             bb_zscore = row['bb_zscore_m15']
-            momentum = row['morning_momentum']
-            if abs(bb_zscore) > 2.5 or momentum > 0.8:
+
+            # Lọc Alpha: Bắt buộc giá 09:59 lệch xa VWAP (abs >= 0.5) và không có bùng nổ xu hướng sáng
+            if abs(vwap_dist_atr) < 0.50 or abs(bb_zscore) > 2.6:
                 pred_class = 0
 
             # Trường hợp 0: No-Trade
@@ -95,7 +86,7 @@ class OOSBacktestEngine:
                 equity_curve.append(current_balance)
                 continue
 
-            # Trường hợp 1, 2, 3: Áp dụng tham số Preset tâm cụm tương ứng
+            # Trường hợp 1, 2, 3: Áp dụng tham số Preset
             params = self.preset_centroids[pred_class]
             step_0 = params['step_0_ratio'] * atr_14
             step_exp = params['step_exp']
@@ -103,24 +94,21 @@ class OOSBacktestEngine:
             multiplier = params['multiplier']
             initial_tp_be_dist = params['tp_be_ratio'] * atr_14
 
-            # Giới hạn lỗ tối đa cho phiên này (2% Balance hiện tại)
             max_loss_allowed = current_balance * self.risk_pct_per_session
 
-            # Tính toán Base Lot động dựa trên rủi ro 2%
+            # Tính Base Lot động
             total_grid_dist = step_0 * sum(step_exp ** i for i in range(max_orders - 1))
             total_lot_exp = sum(multiplier ** i for i in range(max_orders))
             max_loss_points = total_grid_dist + initial_tp_be_dist
             
             base_lot = max(0.01, round(max_loss_allowed / (max_loss_points * self.contract_size * total_lot_exp), 2))
 
-            # Xác định hướng giao dịch Mean Reversion
+            # Hướng Mean Reversion
             direction = -1 if close_0959 >= daily_vwap else 1
 
-            # Khởi tạo lệnh 1 tại Open nến 10:00
             price_1 = exec_m1['open'].iloc[0]
             orders_placed = [{'price': price_1, 'lot': base_lot}]
 
-            # Mức giá kích hoạt lệnh tiếp theo
             step_distances = [step_0 * (step_exp ** (i - 1)) for i in range(max_orders - 1)]
             next_trigger_prices = []
             curr_p = price_1
@@ -133,14 +121,14 @@ class OOSBacktestEngine:
             hit_tp = False
             exit_reason = 'Hard Exit 12:00'
             closed_before_12 = False
-
-            # Vòng lặp từng nến M1 trong 2 tiếng
             total_candles = len(exec_m1)
+
             for m_idx, (t, r) in enumerate(exec_m1.iterrows()):
                 high_t = r['high']
                 low_t = r['low']
+                close_t = r['close']
 
-                # 1. Kiểm tra kích hoạt lệnh lưới mới
+                # 1. Kích hoạt lệnh mới
                 while next_order_idx < len(next_trigger_prices):
                     trig_p = next_trigger_prices[next_order_idx]
                     triggered = (direction == 1 and low_t <= trig_p) or (direction == -1 and high_t >= trig_p)
@@ -151,20 +139,13 @@ class OOSBacktestEngine:
                     else:
                         break
 
-                # 2. Tính giá Breakeven (BE) hiện tại
+                # 2. Tính giá Breakeven (BE) & PnL trạng thái hiện tại
                 total_lot = sum(o['lot'] for o in orders_placed)
                 price_be = sum(o['lot'] * o['price'] for o in orders_placed) / total_lot
 
-                # 3. Time-Decay TP Engine: Thu hẹp TP sau 11:30 VN (phút 90 trở đi)
-                if m_idx >= 90:
-                    decay_ratio = 1.0 - 0.8 * ((m_idx - 90) / max(1, (total_candles - 90)))
-                    current_tp_be_dist = initial_tp_be_dist * max(0.1, decay_ratio)
-                else:
-                    current_tp_be_dist = initial_tp_be_dist
+                floating_pnl = sum(o['lot'] * (close_t - o['price'] if direction == 1 else o['price'] - close_t) for o in orders_placed) * self.contract_size
 
-                tp_price = price_be + current_tp_be_dist if direction == 1 else price_be - current_tp_be_dist
-
-                # 4. Kiểm tra Risk Engine: Floating Drawdown cắn Max Loss (2% Balance)
+                # 3. Risk Engine 2% Cut
                 if direction == 1:
                     worst_floating_pnl = sum(o['lot'] * (low_t - o['price']) for o in orders_placed) * self.contract_size
                 else:
@@ -176,20 +157,40 @@ class OOSBacktestEngine:
                     closed_before_12 = True
                     break
 
-                # 5. Kiểm tra cắn Take Profit
+                # 4. Smart Exit Engine Logic
+                if m_idx < 75:
+                    tp_dist = initial_tp_be_dist
+                elif m_idx < 105:
+                    tp_dist = initial_tp_be_dist * 0.25
+                    if floating_pnl > 0:
+                        hit_tp = True
+                        closed_before_12 = True
+                        exit_reason = 'Smart Exit (Profit > 0)'
+                        session_pnl = floating_pnl
+                        break
+                else:
+                    tp_dist = initial_tp_be_dist * 0.1
+                    if floating_pnl >= -10.0:
+                        closed_before_12 = True
+                        exit_reason = 'Smart Exit (Near Breakeven)'
+                        session_pnl = floating_pnl
+                        break
+
+                tp_price = price_be + tp_dist if direction == 1 else price_be - tp_dist
+
+                # 5. Kiểm tra cắn TP chuẩn
                 if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
                     hit_tp = True
                     closed_before_12 = True
-                    exit_reason = 'TP Hit' if m_idx < 90 else 'Time-Decay TP Hit'
+                    exit_reason = 'TP Hit'
                     session_pnl = sum(o['lot'] * (tp_price - o['price'] if direction == 1 else o['price'] - tp_price) for o in orders_placed) * self.contract_size
                     break
 
-            # 6. Nếu hết nến (12:00:00) chưa đóng -> Hard Exit tại giá Close 12:00
+            # 6. Hard Exit 12:00
             if not closed_before_12:
                 final_close = exec_m1['close'].iloc[-1]
                 session_pnl = sum(o['lot'] * (final_close - o['price'] if direction == 1 else o['price'] - final_close) for o in orders_placed) * self.contract_size
 
-            # Cập nhật số dư tài khoản
             current_balance += session_pnl
             equity_curve.append(current_balance)
 
@@ -207,7 +208,6 @@ class OOSBacktestEngine:
 
         trades_df = pd.DataFrame(daily_trades)
 
-        # ----- TÍNH TOÁN BÁO CÁO HIỆU NĂNG CHI TIẾT -----
         total_days = len(trades_df)
         no_trade_days = (trades_df['pred_class'] == 0).sum()
         traded_days = total_days - no_trade_days
@@ -223,7 +223,6 @@ class OOSBacktestEngine:
         gross_loss = abs(loss_trades['net_profit'].sum())
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
 
-        # Max Drawdown % trên đường cong vốn
         eq_arr = np.array(equity_curve)
         peak = np.maximum.accumulate(eq_arr)
         dd_arr = (eq_arr - peak) / peak
@@ -231,7 +230,6 @@ class OOSBacktestEngine:
 
         total_return_pct = ((current_balance - self.initial_balance) / self.initial_balance) * 100.0
 
-        # Thống kê chi tiết theo từng Preset Chiến Thuật
         preset_stats = {}
         for p_class in [1, 2, 3]:
             sub_p = trades_df[trades_df['pred_class'] == p_class]
@@ -246,9 +244,8 @@ class OOSBacktestEngine:
                     'name': self.preset_centroids[p_class]['name']
                 }
 
-        # Đếm các sự kiện vận hành
         risk_cuts = (trades_df['exit_reason'] == 'Risk Engine Cut (2%)').sum()
-        decay_tp_hits = (trades_df['exit_reason'] == 'Time-Decay TP Hit').sum()
+        smart_exits = (trades_df['exit_reason'].str.contains('Smart Exit')).sum()
         normal_tp_hits = (trades_df['exit_reason'] == 'TP Hit').sum()
         hard_exits = (trades_df['exit_reason'] == 'Hard Exit 12:00').sum()
 
@@ -267,7 +264,7 @@ class OOSBacktestEngine:
             'total_return_pct': total_return_pct,
             'preset_stats': preset_stats,
             'risk_cuts': risk_cuts,
-            'decay_tp_hits': decay_tp_hits,
+            'smart_exits': smart_exits,
             'normal_tp_hits': normal_tp_hits,
             'hard_exits': hard_exits
         }
@@ -292,7 +289,7 @@ class OOSBacktestEngine:
         print(f" ------------------------------------------------------------------")
         print(" 🛡️ PHÂN BỐ LÝ DO ĐÓNG VỊ THẾ:")
         print(f"    - Chốt lời tiêu chuẩn (TP Hit):    {normal_tp_hits} phiên")
-        print(f"    - Chốt lời Time-Decay sau 11:30:  {decay_tp_hits} phiên")
+        print(f"    - Smart Exit (Thu hồi vốn sớm):   {smart_exits} phiên")
         print(f"    - Cắt lỗ khẩn cấp Risk Engine 2%: {risk_cuts} phiên")
         print(f"    - Hard Exit cưỡng chế lúc 12:00:  {hard_exits} phiên")
         print("==================================================================\n")
@@ -300,9 +297,6 @@ class OOSBacktestEngine:
         return trades_df, metrics
 
     def plot_equity_curve(self, equity_curve: List[float], output_path: str):
-        """
-        Vẽ và lưu đồ thị Đường Cong Vốn (Equity Curve).
-        """
         plt.figure(figsize=(12, 6))
         plt.plot(equity_curve, label='System Equity ($)', color='#10B981', linewidth=2)
         plt.axhline(self.initial_balance, color='#6B7280', linestyle='--', label='Initial Balance')
