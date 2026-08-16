@@ -1,0 +1,29 @@
+{
+    "generated_at": "2026-08-14 16:03:58",
+    "strategy": "Rocket 2h High-Alpha Setup System",
+    "risk_reward_ratio": "1 : 2.33",
+    "train_years": [
+        "2020",
+        "2021",
+        "2022",
+        "2023"
+    ],
+    "test_years": [
+        "2024",
+        "2025"
+    ],
+    "unfiltered_test_stats": {
+        "total_profit": 504.08,
+        "profit_factor": 1.37,
+        "win_rate": 53.08,
+        "max_dd_pct": 12.25,
+        "trades": 292
+    },
+    "xgb_filtered_test_stats": {
+        "total_profit": 150.53,
+        "profit_factor": 1.23,
+        "win_rate": 52.42,
+        "max_dd_pct": 12.86,
+        "trades": 124
+    }
+}

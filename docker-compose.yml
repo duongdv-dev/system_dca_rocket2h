@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  optimizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rocket2h-optimizer:latest
+    container_name: rocket2h_optimizer_container
+    volumes:
+      # Mount toàn bộ thư mục hiện tại vào /app trong container
+      # Dữ liệu CSV được đọc trực tiếp và file preset_candidates.json xuất thẳng ra máy host
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
