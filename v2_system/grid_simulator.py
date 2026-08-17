@@ -1,7 +1,7 @@
 """
 v2_system/grid_simulator.py
 ===========================
-Engine Mô Phỏng Kịch Bản Grid/DCA & Chấm Điểm Fitness (v2 - Logging & Analytics).
+Engine Mô Phỏng Kịch Bản Grid/DCA & Chấm Điểm Fitness Từng Ngày (v2).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
@@ -12,7 +12,7 @@ Chức năng:
    - Multiplier: [1.2, 1.4]
    - TP_BE: [0.4x, 0.6x ATR]
 2. Mô phỏng từng kịch bản trên nến M1 (10:00 - 12:00 VN) cho từng ngày.
-3. Chấm điểm theo Fitness Function & In Bảng TOP 10 Presets xuất sắc nhất tập Train.
+3. Chấm điểm theo Fitness Function & In Log mẫu quy trình chấm điểm từng ngày.
 4. Gán nhãn cho tập Train (0: No-Trade, hoặc Bộ tham số tốt nhất).
 """
 
@@ -165,12 +165,11 @@ class GridSimulator:
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Mô phỏng và chấm điểm tất cả các kịch bản tham số trên toàn bộ ngày trong tập Train (2020-2023).
-        In Bảng Thống Kê TOP 10 Kịch Bản Tham Số Xuất Sắc Nhất.
+        In Log mẫu quy trình chấm điểm từng ngày.
         """
         param_grid = GridSimulator.generate_parameter_grid()
         print(f"\n[GridSimulator] Bắt đầu đánh giá {len(param_grid)} kịch bản tham số trên tập Train (2020-2023)...")
 
-        # Thống kê tổng hợp theo từng bộ tham số p (để xếp hạng candidate presets)
         preset_perf_stats = {
             i: {
                 'params': p,
@@ -185,6 +184,7 @@ class GridSimulator:
 
         labeled_records = []
         best_params_records = []
+        sample_day_logs = []
 
         for idx, row in feature_df.iterrows():
             date_str = row['date']
@@ -220,7 +220,6 @@ class GridSimulator:
             for i, p in enumerate(param_grid):
                 res = self.simulate_day_scenario(exec_df, atr_14, close_0959, daily_vwap, p)
                 
-                # Cập nhật thống kê hiệu năng tham số i
                 preset_perf_stats[i]['total_score'] += res['fitness_score']
                 preset_perf_stats[i]['total_pnl'] += res['net_profit']
                 preset_perf_stats[i]['total_dd'] = max(preset_perf_stats[i]['total_dd'], res['max_drawdown'])
@@ -261,16 +260,40 @@ class GridSimulator:
 
             labeled_records.append(rec)
 
+            # Lưu mẫu 5 ngày tiêu biểu để in log giải thích quy trình chấm điểm từng ngày
+            if len(sample_day_logs) < 6 and is_good_day:
+                sample_day_logs.append({
+                    'date': date_str,
+                    'vwap_dist_atr': vwap_dist_atr,
+                    'bb_zscore': bb_zscore,
+                    'best_param': best_param,
+                    'pnl': best_res['net_profit'],
+                    'dd': best_res['max_drawdown'],
+                    'score': best_score
+                })
+
         labeled_df = pd.DataFrame(labeled_records)
         best_params_df = pd.DataFrame(best_params_records)
-        
-        prof_count = (labeled_df['is_profitable'] == 1).sum()
+
+        # ----- IN LOG MẪU QUY TRÌNH CHẤM ĐIỂM TỪNG NGÀY TRONG TẬP TRAIN -----
+        print("\n=========================================================================================================")
+        print(" 🔍 VÍ DỤ MINH HỌA QUY TRÌNH MÔ PHỎNG & CHẤM ĐIỂM TỪNG NGÀY GIAO DỊCH (TẬP TRAIN)")
+        print("=========================================================================================================")
+        print(" [Công thức chấm điểm]: Score = Net_Profit - (2.5 * Max_Drawdown) - (Penalty_300 nếu kẹt lệnh 12:00)")
+        print(" +------------+---------------+-----------+-----------------------------------+----------+---------+----------+")
+        print(" | Ngày Train | Lệch VWAP/ATR | BB ZScore | Tham Số Thắng Nhất (Best Preset)  | PnL ($)  | DD ($)  | Score    |")
+        print(" +------------+---------------+-----------+-----------------------------------+----------+---------+----------+")
+        for s in sample_day_logs:
+            p = s['best_param']
+            p_str = f"S0:{p['step_0_ratio']} | Exp:{p['step_exp']} | Ord:{int(p['max_orders'])} | Mult:{p['multiplier']}"
+            print(f" | {s['date']} | {s['vwap_dist_atr']:<13.2f} | {s['bb_zscore']:<9.2f} | {p_str:<33} | {s['pnl']:<8.2f} | {s['dd']:<7.2f} | {s['score']:<8.1f} |")
+        print("=========================================================================================================\n")
 
         # ----- IN LOG BẢNG CHẤM ĐIỂM TOP 10 KỊCH BẢN THAM SỐ XUẤT SẮC NHẤT -----
         ranked_presets = list(preset_perf_stats.values())
         ranked_presets.sort(key=lambda x: x['total_score'], reverse=True)
 
-        print("\n=========================================================================================================")
+        print("=========================================================================================================")
         print(" 📊 BẢNG CHẤM ĐIỂM TOP 10 KỊCH BẢN THAM SỐ (PRESETS) XUẤT SẮC NHẤT TẬP TRAIN (2020-2023)")
         print("=========================================================================================================")
         print(" | Hạng | Step_0 | Step_Exp | Max_Orders | Multiplier | TP_BE Ratio | Tổng PnL ($) | Win Rate (%) | Max DD ($) |")
@@ -281,6 +304,6 @@ class GridSimulator:
             w_rate = (item['win_days'] / max(1, item['total_days'])) * 100.0
             print(f" | {rank_idx:<4} | {p['step_0_ratio']:<6.1f} | {p['step_exp']:<8.2f} | {int(p['max_orders']):<10} | {p['multiplier']:<10.1f} | {p['tp_be_ratio']:<11.1f} | {item['total_pnl']:<12,.2f} | {w_rate:<12.1f} | {item['total_dd']:<10,.2f} |")
         print("=========================================================================================================\n")
-        print(f"[GridSimulator] Tổng số ngày quan sát Train: {len(labeled_df)} ngày | Số ngày đạt Alpha (>15 score & PnL > 0): {prof_count} ngày")
+        print(f"[GridSimulator] Tổng số ngày quan sát Train: {len(labeled_df)} ngày | Số ngày đạt Alpha (>15 score & PnL > 0): {len(best_params_df)} ngày")
 
         return labeled_df, best_params_df
