@@ -1,21 +1,19 @@
 """
 v2_system/grid_simulator.py
 ===========================
-Engine Mô Phỏng Kịch Bản Grid/DCA & Chấm Điểm Fitness (v2 - Alpha Mean Reversion).
+Engine Mô Phỏng Kịch Bản Grid/DCA & Chấm Điểm Fitness (v2 - Logging & Analytics).
 Được thiết kế bởi Senior Quantitative Researcher.
 
-Nguyên lý Định Lượng (Quantitative Alpha):
-1. Điều kiện vào lệnh: Chỉ giao dịch khi giá 09:59 lệch đủ xa khỏi Daily VWAP (abs(vwap_dist_atr) >= 0.5).
-   Nếu giá quá gần VWAP -> Không có lực hồi (Noise) -> Gán Class 0 (No-Trade).
-2. Lưới tham số an toàn chuẩn hóa cho Gold (XAUUSD):
+Chức năng:
+1. Tạo không gian 48 kịch bản tham số chuẩn hóa cho XAUUSD (Mean Reversion):
    - Step_0: [1.0x, 1.4x, 1.8x ATR]
    - Step_Exp: [1.1, 1.25]
    - Max_Orders: [4, 5]
    - Multiplier: [1.2, 1.4]
    - TP_BE: [0.4x, 0.6x ATR]
-3. Smart Exit Logic:
-   - Thu hẹp TP về sát Breakeven sau phút 75 (11:15 VN). Chốt lời ngay khi PnL > 0.
-   - Phút 105 (11:45 VN) trở đi: Đóng ngay nếu PnL gần hòa vốn (>= -$10) để tránh rủi ro Hard Exit 12:00.
+2. Mô phỏng từng kịch bản trên nến M1 (10:00 - 12:00 VN) cho từng ngày.
+3. Chấm điểm theo Fitness Function & In Bảng TOP 10 Presets xuất sắc nhất tập Train.
+4. Gán nhãn cho tập Train (0: No-Trade, hoặc Bộ tham số tốt nhất).
 """
 
 import itertools
@@ -88,7 +86,6 @@ class GridSimulator:
         hit_tp = False
         net_profit = 0.0
         max_drawdown = 0.0
-        total_candles = len(exec_m1)
 
         for m_idx, (t, row) in enumerate(exec_m1.iterrows()):
             high_t = row['high']
@@ -117,9 +114,6 @@ class GridSimulator:
                 max_drawdown = max(max_drawdown, abs(floating_pnl))
 
             # 3. Dynamic Smart Exit Engine
-            # Phút 0 - 75 (10:00 - 11:15 VN): TP = BE +/- initial_tp_be_dist
-            # Phút 75 - 105 (11:15 - 11:45 VN): TP thu về sát BE + 0.1 * ATR. Nếu floating_pnl > 0 -> ĐÓNG NGAY!
-            # Phút 105 - 120 (11:45 - 12:00 VN): Nếu floating_pnl >= -10.0 -> ĐÓNG NGAY bảo toàn vốn!
             if m_idx < 75:
                 tp_dist = initial_tp_be_dist
             elif m_idx < 105:
@@ -170,10 +164,24 @@ class GridSimulator:
         daily_m1_dict: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]]
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Mô phỏng các kịch bản cho tập Train (2020-2023).
+        Mô phỏng và chấm điểm tất cả các kịch bản tham số trên toàn bộ ngày trong tập Train (2020-2023).
+        In Bảng Thống Kê TOP 10 Kịch Bản Tham Số Xuất Sắc Nhất.
         """
         param_grid = GridSimulator.generate_parameter_grid()
-        print(f"[GridSimulator] Khởi tạo {len(param_grid)} kịch bản tham số Alpha...")
+        print(f"\n[GridSimulator] Bắt đầu đánh giá {len(param_grid)} kịch bản tham số trên tập Train (2020-2023)...")
+
+        # Thống kê tổng hợp theo từng bộ tham số p (để xếp hạng candidate presets)
+        preset_perf_stats = {
+            i: {
+                'params': p,
+                'total_score': 0.0,
+                'total_pnl': 0.0,
+                'total_dd': 0.0,
+                'win_days': 0,
+                'loss_days': 0,
+                'total_days': 0
+            } for i, p in enumerate(param_grid)
+        }
 
         labeled_records = []
         best_params_records = []
@@ -190,9 +198,7 @@ class GridSimulator:
             vwap_dist_atr = row['vwap_dist_atr']
             bb_zscore = row['bb_zscore_m15']
 
-            # LỌC ALPHA NNGHIÊM NGẶT:
-            # 1. Bắt buộc giá 09:59 phải lệch khỏi VWAP ít nhất 0.5 ATR (mới có sóng hồi)
-            # 2. Không giao dịch những ngày xu hướng bùng nổ quá mức (abs(bb_zscore) > 2.6)
+            # Lọc Alpha: Bắt buộc lệch VWAP >= 0.5 ATR và không nổ xu hướng quá mức
             if abs(vwap_dist_atr) < 0.50 or abs(bb_zscore) > 2.6:
                 rec = row.to_dict()
                 rec['best_fitness_score'] = -100.0
@@ -211,14 +217,24 @@ class GridSimulator:
             best_param = None
             best_res = None
 
-            for p in param_grid:
+            for i, p in enumerate(param_grid):
                 res = self.simulate_day_scenario(exec_df, atr_14, close_0959, daily_vwap, p)
+                
+                # Cập nhật thống kê hiệu năng tham số i
+                preset_perf_stats[i]['total_score'] += res['fitness_score']
+                preset_perf_stats[i]['total_pnl'] += res['net_profit']
+                preset_perf_stats[i]['total_dd'] = max(preset_perf_stats[i]['total_dd'], res['max_drawdown'])
+                preset_perf_stats[i]['total_days'] += 1
+                if res['net_profit'] > 0:
+                    preset_perf_stats[i]['win_days'] += 1
+                else:
+                    preset_perf_stats[i]['loss_days'] += 1
+
                 if res['fitness_score'] > best_score:
                     best_score = res['fitness_score']
                     best_param = p
                     best_res = res
 
-            # Điều kiện gán nhãn có lãi chuẩn: Score > 15.0 và net_profit > 0
             is_good_day = (best_score > 15.0) and (best_res is not None and best_res['net_profit'] > 0)
 
             rec = row.to_dict()
@@ -249,6 +265,22 @@ class GridSimulator:
         best_params_df = pd.DataFrame(best_params_records)
         
         prof_count = (labeled_df['is_profitable'] == 1).sum()
-        print(f"[GridSimulator] Tổng số ngày train: {len(labeled_df)} | Ngày đạt Alpha Mean Reversion (>15 score): {prof_count}")
+
+        # ----- IN LOG BẢNG CHẤM ĐIỂM TOP 10 KỊCH BẢN THAM SỐ XUẤT SẮC NHẤT -----
+        ranked_presets = list(preset_perf_stats.values())
+        ranked_presets.sort(key=lambda x: x['total_score'], reverse=True)
+
+        print("\n=========================================================================================================")
+        print(" 📊 BẢNG CHẤM ĐIỂM TOP 10 KỊCH BẢN THAM SỐ (PRESETS) XUẤT SẮC NHẤT TẬP TRAIN (2020-2023)")
+        print("=========================================================================================================")
+        print(" | Hạng | Step_0 | Step_Exp | Max_Orders | Multiplier | TP_BE Ratio | Tổng PnL ($) | Win Rate (%) | Max DD ($) |")
+        print(" +------+--------+----------+------------+------------+-------------+--------------+--------------+------------+")
+
+        for rank_idx, item in enumerate(ranked_presets[:10], start=1):
+            p = item['params']
+            w_rate = (item['win_days'] / max(1, item['total_days'])) * 100.0
+            print(f" | {rank_idx:<4} | {p['step_0_ratio']:<6.1f} | {p['step_exp']:<8.2f} | {int(p['max_orders']):<10} | {p['multiplier']:<10.1f} | {p['tp_be_ratio']:<11.1f} | {item['total_pnl']:<12,.2f} | {w_rate:<12.1f} | {item['total_dd']:<10,.2f} |")
+        print("=========================================================================================================\n")
+        print(f"[GridSimulator] Tổng số ngày quan sát Train: {len(labeled_df)} ngày | Số ngày đạt Alpha (>15 score & PnL > 0): {prof_count} ngày")
 
         return labeled_df, best_params_df

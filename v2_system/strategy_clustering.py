@@ -1,7 +1,7 @@
 """
 v2_system/strategy_clustering.py
 ================================
-Strategy Clustering Module cho Hệ Thống XAUUSD Grid/DCA (v2).
+Strategy Clustering Module cho Hệ Thống XAUUSD Grid/DCA (v2 - Detailed Logging).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
@@ -12,6 +12,7 @@ Chức năng:
    - Presets 3: Phòng Thủ (Defensive)
 3. Tính toán các tham số tâm cụm (Centroids) đại diện cho từng Preset.
 4. Gán nhãn đa lớp (0: No-Trade, 1: Lưới hẹp, 2: Tiêu chuẩn, 3: Phòng thủ) cho tập Train.
+5. In Bảng Phân Tích Đánh Giá Chi Tiết K-Means Centroids & Điểm Số Tập Train.
 """
 
 import numpy as np
@@ -45,15 +46,10 @@ class StrategyClustering:
         # Lấy tâm cụm dạng unscaled
         centroids_unscaled = self.scaler.inverse_transform(self.kmeans.cluster_centers_)
 
-        # Sắp xếp các cụm theo độ rộng lưới (step_0_ratio * max_orders) để định danh rõ ràng:
-        # Cụm 1: Lưới Hẹp (step_0_ratio nhỏ)
-        # Cụm 2: Tiêu Chuẩn (trung bình)
-        # Cụm 3: Phòng Thủ (step_0_ratio lớn, an toàn hơn)
-        
+        # Sắp xếp các cụm theo độ rộng lưới (step_0_ratio * max_orders) để định danh rõ ràng
         raw_centroids = []
         for c_idx in range(self.n_clusters):
             c_dict = {col: centroids_unscaled[c_idx][i] for i, col in enumerate(param_cols)}
-            # Tính chỉ số độ hẹp/rộng
             c_dict['aggression_score'] = c_dict['step_0_ratio']
             c_dict['orig_idx'] = c_idx
             raw_centroids.append(c_dict)
@@ -82,9 +78,24 @@ class StrategyClustering:
         # Gán lại nhãn cụm 1, 2, 3
         mapped_labels = np.array([cluster_mapping[lbl] for lbl in cluster_labels])
 
-        print("[StrategyClustering] Kết quả Gom cụm 3 Chiến thuật (Centroids):")
-        for preset_id, p_info in self.preset_centroids.items():
-            print(f"  Preset {preset_id} - {p_info['name']}: {p_info}")
+        # Tính thống kê PnL và Drawdown trung bình của các ngày nằm trong mỗi cụm
+        best_params_df_copy = best_params_df.copy()
+        best_params_df_copy['mapped_cluster'] = mapped_labels
+
+        print("\n=========================================================================================================")
+        print(" 🎯 KẾT QUẢ GOM CỤM K-MEANS (K=3) & ĐÁNH GIÁ 3 PRESETS CHIẾN THUẬT QUAN TRỌNG")
+        print("=========================================================================================================")
+        print(" | Preset ID | Tên Chiến Thuật         | Số Ngày Train | Mean PnL ($) | Mean DD ($) | Tham Số Tâm Cụm (Centroid) |")
+        print(" +-----------+-------------------------+---------------+--------------+-------------+----------------------------+")
+
+        for p_id in [1, 2, 3]:
+            sub_c = best_params_df_copy[best_params_df_copy['mapped_cluster'] == p_id]
+            mean_pnl = sub_c['net_profit'].mean() if not sub_c.empty else 0.0
+            mean_dd = sub_c['max_drawdown'].mean() if not sub_c.empty else 0.0
+            c_info = self.preset_centroids[p_id]
+            c_str = f"S0:{c_info['step_0_ratio']} | Exp:{c_info['step_exp']} | MaxOrd:{c_info['max_orders']} | Mult:{c_info['multiplier']} | TP:{c_info['tp_be_ratio']}"
+            print(f" | Preset {p_id}  | {c_info['name']:<23} | {len(sub_c):<13} | {mean_pnl:<12,.2f} | {mean_dd:<11,.2f} | {c_str:<26} |")
+        print("=========================================================================================================\n")
 
         return mapped_labels, self.preset_centroids
 
@@ -104,7 +115,6 @@ class StrategyClustering:
         best_params_df_copy = best_params_df.copy()
         best_params_df_copy['preset_cluster'] = mapped_cluster_labels
 
-        # Map lại vào DataFrame chính theo ngày
         date_to_cluster = dict(zip(best_params_df_copy['date'], best_params_df_copy['preset_cluster']))
 
         for i, row in df.iterrows():
@@ -113,10 +123,14 @@ class StrategyClustering:
                 df.at[i, 'target'] = date_to_cluster[d]
 
         target_counts = df['target'].value_counts().to_dict()
-        print(f"[StrategyClustering] Phân bố nhãn đa lớp tập Train: {target_counts}")
+        print(f"[StrategyClustering] Bảng Phân Bổ Nhãn Đa Lớp Tập Train (2020-2023):")
+        print(f"  • Class 0 (No-Trade):   {target_counts.get(0, 0)} ngày ({target_counts.get(0, 0)/len(df)*100:.1f}%)")
+        print(f"  • Class 1 (Lưới Hẹp):   {target_counts.get(1, 0)} ngày ({target_counts.get(1, 0)/len(df)*100:.1f}%)")
+        print(f"  • Class 2 (Tiêu Chuẩn): {target_counts.get(2, 0)} ngày ({target_counts.get(2, 0)/len(df)*100:.1f}%)")
+        print(f"  • Class 3 (Phòng Thủ):  {target_counts.get(3, 0)} ngày ({target_counts.get(3, 0)/len(df)*100:.1f}%)\n")
+
         return df
 
 
 if __name__ == '__main__':
-    # Unit test cơ bản
     pass
