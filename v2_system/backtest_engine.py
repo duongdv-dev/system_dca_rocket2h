@@ -1,16 +1,15 @@
 """
 v2_system/backtest_engine.py
 =============================
-Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - Trend Alignment Safety).
+Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - True Intraday Stretch & Fixed 10:00 Open TP).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
 1. Chạy mô phỏng thực thi chi tiết trên dữ liệu nến M1 tập Test (2024-2025).
-2. Tích hợp 4 lớp bảo vệ rủi ro:
-   - Trend Alignment Safety: Cấm SELL ngược xu hướng tăng (bb_slope > 0.15) và Cấm BUY ngược xu hướng giảm.
-   - Dynamic Risk Engine: Khóa cứng rủi ro Max Loss <= 2% Balance cho mỗi phiên.
-   - Dynamic Trailing TP: Chốt lời sát Breakeven ngay khi nhồi từ lệnh thứ 2 trở đi.
-   - Hard Exit: Cưỡng chế đóng 100% vị thế lúc 12:00:00.
+2. QUY TẮC CỐT LÕI ĐÍCH THỰC CỦA USER:
+   - Chờ giá nảy giãn đủ `Step_0` từ Giá Open 10:00 AM mới mở Order 1!
+   - Take Profit (TP) LUÔN CỐ ĐỊNH TẠI GIÁ OPEN 10:00 AM (price_1000).
+   - Khi giá hồi về chạm `price_1000`: Order 1, Order 2, Order 3... TẤT CẢ ĐỀU ĐẠT LỢI NHUẬN DƯƠNG LỚN!
 """
 
 import os
@@ -43,10 +42,12 @@ class OOSBacktestEngine:
         daily_trades = []
 
         print("\n==================================================================")
-        print(" 🧪 RUNNING OUT-OF-SAMPLE BACKTEST WITH TREND ALIGNMENT SAFETY")
+        print(" 🧪 RUNNING BACKTEST (ORDER 1 CHỜ GIÃN STEP_0, TP CỐ ĐỊNH OPEN 10:00)")
         print("==================================================================")
         print(f" • Vốn ban đầu:            ${self.initial_balance:,.2f}")
         print(f" • Khung giờ thực thi:      10:00 - 12:00 (Giờ Việt Nam, UTC+7)")
+        print(f" • Order 1 Trigger:        Khớp khi giá nảy giãn xa Open 10:00 đúng Step_0")
+        print(f" • Take Profit (TP):        LUÔN CỐ ĐỊNH TẠI GIÁ OPEN 10:00 AM")
         print(f" • Dynamic Risk Engine:    Khóa cứng Max Loss <= {self.risk_pct_per_session*100:.1f}% Balance / phiên")
         print(f" • Hard Exit:              Đóng 100% vị thế tại 12:00:00 VN\n")
 
@@ -66,7 +67,7 @@ class OOSBacktestEngine:
             bb_slope = row['bb_slope_m15']
             morning_momentum = row['morning_momentum']
 
-            # Trend Alignment Safety Filters:
+            # Trend Safety Filters
             is_trend_sell_conflict = (bb_slope > 0.15 and vwap_dist_atr > 0)
             is_trend_buy_conflict = (bb_slope < -0.15 and vwap_dist_atr < 0)
 
@@ -95,86 +96,80 @@ class OOSBacktestEngine:
             step_exp = params['step_exp']
             max_orders = int(params['max_orders'])
             multiplier = params['multiplier']
-            initial_tp_be_dist = params['tp_be_ratio'] * atr_14
 
             max_loss_allowed = current_balance * self.risk_pct_per_session
 
             # Tính Base Lot động
             total_grid_dist = step_0 * sum(step_exp ** i for i in range(max_orders - 1))
             total_lot_exp = sum(multiplier ** i for i in range(max_orders))
-            max_loss_points = total_grid_dist + initial_tp_be_dist
+            max_loss_points = total_grid_dist + (0.5 * atr_14)
             
             base_lot = max(0.01, round(max_loss_allowed / (max_loss_points * self.contract_size * total_lot_exp), 2))
 
             # Hướng Mean Reversion
             direction = -1 if close_0959 >= daily_vwap else 1
 
-            price_1 = exec_m1['open'].iloc[0]
-            orders_placed = [{'price': price_1, 'lot': base_lot}]
+            price_1000 = exec_m1['open'].iloc[0] # Giá Open 10:00 AM
+            tp_price = price_1000               # TP LUÔN CỐ ĐỊNH TẠI GIÁ OPEN 10:00 AM!
 
-            step_distances = [step_0 * (step_exp ** (i - 1)) for i in range(max_orders - 1)]
-            next_trigger_prices = []
-            curr_p = price_1
-            for dist in step_distances:
-                curr_p = curr_p - dist if direction == 1 else curr_p + dist
-                next_trigger_prices.append(curr_p)
+            # Tính danh sách mức giá kích hoạt cho Order 1, Order 2, Order 3, Order 4...
+            trigger_prices = []
+            curr_p = price_1000 - step_0 if direction == 1 else price_1000 + step_0
+            trigger_prices.append(curr_p)
 
+            for i in range(1, max_orders):
+                dist_i = step_0 * (step_exp ** i)
+                curr_p = curr_p - dist_i if direction == 1 else curr_p + dist_i
+                trigger_prices.append(curr_p)
+
+            orders_placed = []
             next_order_idx = 0
             session_pnl = 0.0
             hit_tp = False
-            exit_reason = 'Hard Exit 12:00'
+            exit_reason = 'No-Trade (Lệnh 1 chưa khớp)'
             closed_before_12 = False
 
             for m_idx, (t, r) in enumerate(exec_m1.iterrows()):
                 high_t = r['high']
                 low_t = r['low']
 
-                # 1. Kích hoạt lệnh mới
-                while next_order_idx < len(next_trigger_prices):
-                    trig_p = next_trigger_prices[next_order_idx]
+                # 1. Kích hoạt lệnh mới khi giá nảy tới trigger_prices
+                while next_order_idx < len(trigger_prices):
+                    trig_p = trigger_prices[next_order_idx]
                     triggered = (direction == 1 and low_t <= trig_p) or (direction == -1 and high_t >= trig_p)
                     if triggered:
-                        lot_k = base_lot * (multiplier ** (next_order_idx + 1))
+                        lot_k = base_lot * (multiplier ** next_order_idx)
                         orders_placed.append({'price': trig_p, 'lot': lot_k})
                         next_order_idx += 1
                     else:
                         break
 
-                # 2. Tính giá Breakeven (BE) hiện tại
-                total_lot = sum(o['lot'] for o in orders_placed)
-                price_be = sum(o['lot'] * o['price'] for o in orders_placed) / total_lot
+                # 2. Khi đã có ít nhất 1 lệnh khớp
+                if len(orders_placed) > 0:
+                    # Risk Engine 2% Cut
+                    if direction == 1:
+                        worst_floating_pnl = sum(o['lot'] * (low_t - o['price']) for o in orders_placed) * self.contract_size
+                    else:
+                        worst_floating_pnl = sum(o['lot'] * (o['price'] - high_t) for o in orders_placed) * self.contract_size
 
-                # 3. Dynamic Trailing TP cho lệnh nhồi
-                if len(orders_placed) >= 2:
-                    current_tp_be_dist = initial_tp_be_dist * 0.70
-                else:
-                    current_tp_be_dist = initial_tp_be_dist
+                    if worst_floating_pnl <= -max_loss_allowed:
+                        session_pnl = -max_loss_allowed
+                        exit_reason = 'Risk Engine Cut (2%)'
+                        closed_before_12 = True
+                        break
 
-                tp_price = price_be + current_tp_be_dist if direction == 1 else price_be - current_tp_be_dist
+                    # Kiểm tra cắn TP cố định tại Giá Open 10:00 AM (price_1000)
+                    if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
+                        hit_tp = True
+                        closed_before_12 = True
+                        exit_reason = 'TP Hit (10:00 Open)'
+                        session_pnl = sum(o['lot'] * (tp_price - o['price'] if direction == 1 else o['price'] - tp_price) for o in orders_placed) * self.contract_size
+                        break
 
-                # 4. Risk Engine 2% Cut
-                if direction == 1:
-                    worst_floating_pnl = sum(o['lot'] * (low_t - o['price']) for o in orders_placed) * self.contract_size
-                else:
-                    worst_floating_pnl = sum(o['lot'] * (o['price'] - high_t) for o in orders_placed) * self.contract_size
-
-                if worst_floating_pnl <= -max_loss_allowed:
-                    session_pnl = -max_loss_allowed
-                    exit_reason = 'Risk Engine Cut (2%)'
-                    closed_before_12 = True
-                    break
-
-                # 5. Kiểm tra cắn TP
-                if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
-                    hit_tp = True
-                    closed_before_12 = True
-                    exit_reason = 'TP Hit'
-                    session_pnl = sum(o['lot'] * (tp_price - o['price'] if direction == 1 else o['price'] - tp_price) for o in orders_placed) * self.contract_size
-                    break
-
-            # 6. Hard Exit 12:00
-            if not closed_before_12:
+            # 3. Hard Exit 12:00:00 (Nếu đã khớp lệnh nhưng chưa cắn TP)
+            if len(orders_placed) > 0 and not closed_before_12:
                 final_close = exec_m1['close'].iloc[-1]
+                exit_reason = 'Hard Exit 12:00'
                 session_pnl = sum(o['lot'] * (final_close - o['price'] if direction == 1 else o['price'] - final_close) for o in orders_placed) * self.contract_size
 
             current_balance += session_pnl
@@ -230,10 +225,6 @@ class OOSBacktestEngine:
                     'name': self.preset_centroids[p_class]['name']
                 }
 
-        risk_cuts = (trades_df['exit_reason'] == 'Risk Engine Cut (2%)').sum()
-        normal_tp_hits = (trades_df['exit_reason'] == 'TP Hit').sum()
-        hard_exits = (trades_df['exit_reason'] == 'Hard Exit 12:00').sum()
-
         metrics = {
             'total_days': total_days,
             'no_trade_days': no_trade_days,
@@ -247,14 +238,11 @@ class OOSBacktestEngine:
             'initial_balance': self.initial_balance,
             'final_balance': current_balance,
             'total_return_pct': total_return_pct,
-            'preset_stats': preset_stats,
-            'risk_cuts': risk_cuts,
-            'normal_tp_hits': normal_tp_hits,
-            'hard_exits': hard_exits
+            'preset_stats': preset_stats
         }
 
         print("\n==================================================================")
-        print(" 📊 OOS BACKTEST REPORT (2024 - 2025)")
+        print(" 📊 BACKTEST REPORT (ORDER 1 CHỜ GIÃN STEP_0, TP CỐ ĐỊNH OPEN 10:00)")
         print("==================================================================")
         print(f" 💰 Initial Balance:                 ${self.initial_balance:,.2f}")
         print(f" 🚀 Final Balance:                   ${current_balance:,.2f}")
@@ -271,7 +259,7 @@ class OOSBacktestEngine:
         plt.figure(figsize=(12, 6))
         plt.plot(equity_curve, label='System Equity ($)', color='#10B981', linewidth=2)
         plt.axhline(self.initial_balance, color='#6B7280', linestyle='--', label='Initial Balance')
-        plt.title('Out-of-Sample Equity Curve (2024-2025) - XAUUSD Intraday Grid v2', fontsize=14, fontweight='bold')
+        plt.title('Equity Curve (Order 1 Stretch Step_0 & Fixed 10:00 Open TP)', fontsize=14, fontweight='bold')
         plt.xlabel('Traded Sessions / Days', fontsize=12)
         plt.ylabel('Account Equity ($)', fontsize=12)
         plt.grid(True, linestyle=':', alpha=0.6)
@@ -279,7 +267,6 @@ class OOSBacktestEngine:
         plt.tight_layout()
         plt.savefig(output_path, dpi=300)
         plt.close()
-        print(f"[OOSBacktestEngine] Đã xuất đồ thị Equity Curve -> {output_path}")
 
 
 if __name__ == '__main__':

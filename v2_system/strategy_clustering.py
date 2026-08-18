@@ -1,18 +1,12 @@
 """
 v2_system/strategy_clustering.py
 ================================
-Strategy Clustering Module cho Hệ Thống XAUUSD Grid/DCA (v2 - Detailed Logging).
+Strategy Clustering Module cho Hệ Thống XAUUSD Grid/DCA (v2 - Fixed TP 10:00 Open).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
-1. Nhận vào dữ liệu các ngày có kịch bản có lãi (Score > 0) cùng bộ tham số tốt nhất.
-2. Dùng K-Means (K=3) gom cụm bộ tham số thành 3 cụm chiến thuật chuẩn:
-   - Presets 1: Lưới Hẹp (Narrow / Aggressive)
-   - Presets 2: Tiêu Chuẩn (Standard)
-   - Presets 3: Phòng Thủ (Defensive)
-3. Tính toán các tham số tâm cụm (Centroids) đại diện cho từng Preset.
-4. Gán nhãn đa lớp (0: No-Trade, 1: Lưới hẹp, 2: Tiêu chuẩn, 3: Phòng thủ) cho tập Train.
-5. In Bảng Phân Tích Đánh Giá Chi Tiết K-Means Centroids & Điểm Số Tập Train.
+1. Gom cụm K-Means (K=3) bộ tham số [step_0_ratio, step_exp, max_orders, multiplier].
+2. TP cố định tại Giá Open 10:00 AM.
 """
 
 import numpy as np
@@ -31,22 +25,15 @@ class StrategyClustering:
 
     def fit_clusters(self, best_params_df: pd.DataFrame) -> Tuple[np.ndarray, Dict[int, Dict[str, float]]]:
         """
-        Thực hiện K-Means clustering trên không gian tham số tốt nhất.
-        Các đặc trưng tham số: [step_0_ratio, step_exp, max_orders, multiplier, tp_be_ratio]
+        Thực hiện K-Means clustering trên [step_0_ratio, step_exp, max_orders, multiplier].
         """
-        param_cols = ['step_0_ratio', 'step_exp', 'max_orders', 'multiplier', 'tp_be_ratio']
+        param_cols = ['step_0_ratio', 'step_exp', 'max_orders', 'multiplier']
         X_params = best_params_df[param_cols].values
 
-        # Scale đặc trưng trước khi K-Means
         X_scaled = self.scaler.fit_transform(X_params)
-        
-        # Fit K-Means
         cluster_labels = self.kmeans.fit_predict(X_scaled)
-        
-        # Lấy tâm cụm dạng unscaled
         centroids_unscaled = self.scaler.inverse_transform(self.kmeans.cluster_centers_)
 
-        # Sắp xếp các cụm theo độ rộng lưới (step_0_ratio * max_orders) để định danh rõ ràng
         raw_centroids = []
         for c_idx in range(self.n_clusters):
             c_dict = {col: centroids_unscaled[c_idx][i] for i, col in enumerate(param_cols)}
@@ -54,10 +41,8 @@ class StrategyClustering:
             c_dict['orig_idx'] = c_idx
             raw_centroids.append(c_dict)
 
-        # Sắp xếp tăng dần theo step_0_ratio
         raw_centroids.sort(key=lambda x: x['step_0_ratio'])
 
-        # Tạo map đổi tên cụm cũ -> cụm chuẩn 1, 2, 3
         cluster_mapping = {}
         names = ["Lưới Hẹp (Narrow)", "Tiêu Chuẩn (Standard)", "Phòng Thủ (Defensive)"]
         
@@ -65,25 +50,21 @@ class StrategyClustering:
             orig_idx = c_dict['orig_idx']
             cluster_mapping[orig_idx] = new_label
             
-            # Làm tròn tham số tâm cụm cho sản xuất thực tế
             self.preset_centroids[new_label] = {
                 'name': names[new_label - 1],
                 'step_0_ratio': round(c_dict['step_0_ratio'], 2),
                 'step_exp': round(c_dict['step_exp'], 2),
                 'max_orders': int(round(c_dict['max_orders'])),
-                'multiplier': round(c_dict['multiplier'], 2),
-                'tp_be_ratio': round(c_dict['tp_be_ratio'], 2)
+                'multiplier': round(c_dict['multiplier'], 2)
             }
 
-        # Gán lại nhãn cụm 1, 2, 3
         mapped_labels = np.array([cluster_mapping[lbl] for lbl in cluster_labels])
 
-        # Tính thống kê PnL và Drawdown trung bình của các ngày nằm trong mỗi cụm
         best_params_df_copy = best_params_df.copy()
         best_params_df_copy['mapped_cluster'] = mapped_labels
 
         print("\n=========================================================================================================")
-        print(" 🎯 KẾT QUẢ GOM CỤM K-MEANS (K=3) & ĐÁNH GIÁ 3 PRESETS CHIẾN THUẬT QUAN TRỌNG")
+        print(" 🎯 KẾT QUẢ GOM CỤM K-MEANS (K=3) - TP CỐ ĐỊNH TẠI GIÁ OPEN 10:00 AM")
         print("=========================================================================================================")
         print(" | Preset ID | Tên Chiến Thuật         | Số Ngày Train | Mean PnL ($) | Mean DD ($) | Tham Số Tâm Cụm (Centroid) |")
         print(" +-----------+-------------------------+---------------+--------------+-------------+----------------------------+")
@@ -93,7 +74,7 @@ class StrategyClustering:
             mean_pnl = sub_c['net_profit'].mean() if not sub_c.empty else 0.0
             mean_dd = sub_c['max_drawdown'].mean() if not sub_c.empty else 0.0
             c_info = self.preset_centroids[p_id]
-            c_str = f"S0:{c_info['step_0_ratio']} | Exp:{c_info['step_exp']} | MaxOrd:{c_info['max_orders']} | Mult:{c_info['multiplier']} | TP:{c_info['tp_be_ratio']}"
+            c_str = f"S0:{c_info['step_0_ratio']} | Exp:{c_info['step_exp']} | MaxOrd:{c_info['max_orders']} | Mult:{c_info['multiplier']}"
             print(f" | Preset {p_id}  | {c_info['name']:<23} | {len(sub_c):<13} | {mean_pnl:<12,.2f} | {mean_dd:<11,.2f} | {c_str:<26} |")
         print("=========================================================================================================\n")
 
@@ -105,13 +86,9 @@ class StrategyClustering:
         best_params_df: pd.DataFrame,
         mapped_cluster_labels: np.ndarray
     ) -> pd.DataFrame:
-        """
-        Kết hợp gán nhãn đa lớp (0, 1, 2, 3) cho toàn bộ tập dữ liệu Train.
-        """
         df = labeled_df.copy()
-        df['target'] = 0  # Mặc định 0: No-Trade
+        df['target'] = 0
 
-        # Gán nhãn cụm cho những ngày có lãi
         best_params_df_copy = best_params_df.copy()
         best_params_df_copy['preset_cluster'] = mapped_cluster_labels
 
@@ -123,7 +100,7 @@ class StrategyClustering:
                 df.at[i, 'target'] = date_to_cluster[d]
 
         target_counts = df['target'].value_counts().to_dict()
-        print(f"[StrategyClustering] Bảng Phân Bổ Nhãn Đa Lớp Tập Train (2020-2023):")
+        print(f"[StrategyClustering] Bảng Phân Bổ Nhãn Đa Lớp Tập Train:")
         print(f"  • Class 0 (No-Trade):   {target_counts.get(0, 0)} ngày ({target_counts.get(0, 0)/len(df)*100:.1f}%)")
         print(f"  • Class 1 (Lưới Hẹp):   {target_counts.get(1, 0)} ngày ({target_counts.get(1, 0)/len(df)*100:.1f}%)")
         print(f"  • Class 2 (Tiêu Chuẩn): {target_counts.get(2, 0)} ngày ({target_counts.get(2, 0)/len(df)*100:.1f}%)")
