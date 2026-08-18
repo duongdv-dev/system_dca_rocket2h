@@ -1,23 +1,17 @@
 """
 v2_system/grid_simulator.py
 ===========================
-Engine Mô Phỏng Kịch Bản Grid/DCA & Chấm Điểm Fitness Chuẩn Thuần Tuý (Pure Deterministic Simulator).
+Engine Mô Phỏng Kịch Bản Grid/DCA & Chấm Điểm Fitness Độc Lập Từng Ngày (Pure Daily Simulator).
 Được thiết kế bởi Senior Quantitative Researcher.
 
-Nguyên lý Mô Phỏng & Chấm Điểm (Deterministic Simulation & Scoring):
-1. Tham số kịch bản:
-   - Step_0: [0.8x, 1.2x, 1.6x ATR]
-   - Step_Exp: [1.0, 1.2]
-   - Max_Orders: [3, 4, 5]
-   - Multiplier: [1.0, 1.3, 1.5]
-   - TP_BE: [0.4x, 0.7x ATR]
-2. Mô phỏng thuần túy từng phút M1 (10:00 - 12:00 VN):
-   - Mở Order 1 tại Open 10:00.
-   - Khớp các order grid tiếp theo khi High/Low M1 chạm giá trigger.
-   - Chốt lời khi High/Low M1 chạm TP_Price = Price_BE +/- (TP_BE * ATR).
-   - Nếu đến 12:00:00 chưa cắn TP -> Đóng tại Close 12:00 và chịu phạt Unclosed Penalty.
-3. Fitness Function:
-   Score = Net_Profit - (2.0 * Max_Drawdown) - (500.0 nếu kẹt lệnh lúc 12:00).
+Nguyên lý Độc Lập Từng Ngày (Strict Daily Isolation & ATR Normalization):
+1. Mỗi ngày được khởi tạo hoàn toàn độc lập (orders_placed = [], net_profit = 0, max_drawdown = 0).
+   Không có bất kỳ dữ liệu hay số dư nào bị rò rỉ từ ngày trước sang ngày sau.
+2. Đo đạc PnL và Drawdown theo Bội Số ATR (ATR Units) thay vì Dollar tuyệt đối:
+   - pnl_atr = Net_Profit_Points / ATR_14
+   - dd_atr = Max_Drawdown_Points / ATR_14
+   - Fitness Score = pnl_atr - (2.0 * dd_atr) - (20.0 nếu kẹt lệnh 12:00)
+   Giúp chấm điểm công bằng 100% giữa các năm 2020 ($1,500) và 2024 ($2,700).
 """
 
 import itertools
@@ -62,7 +56,7 @@ class GridSimulator:
         base_lot: float = 0.1
     ) -> Dict[str, Any]:
         """
-        Mô phỏng thuần túy 100% không gian kịch bản trên nến M1 từ 10:00 đến 12:00.
+        Mô phỏng 100% ĐỘC LẬP cho 1 ngày cụ thể (Không lưu vết từ ngày cũ).
         """
         step_0 = params['step_0_ratio'] * atr_14
         step_exp = params['step_exp']
@@ -73,6 +67,7 @@ class GridSimulator:
         # Hướng Mean Reversion: 09:59 >= VWAP -> SELL; 09:59 < VWAP -> BUY
         direction = -1 if close_0959 >= daily_vwap else 1
 
+        # Reset hoàn toàn trạng thái cho ngày mới
         orders_placed = []
         price_1 = exec_m1['open'].iloc[0]
         orders_placed.append({'price': price_1, 'lot': base_lot})
@@ -97,7 +92,7 @@ class GridSimulator:
             low_t = row['low']
             close_t = row['close']
 
-            # 1. Kích hoạt các lệnh chờ tiếp theo
+            # 1. Kích hoạt lệnh lưới tiếp theo
             while next_order_idx < len(next_trigger_prices):
                 trig_p = next_trigger_prices[next_order_idx]
                 triggered = (direction == 1 and low_t <= trig_p) or (direction == -1 and high_t >= trig_p)
@@ -109,7 +104,7 @@ class GridSimulator:
                 else:
                     break
 
-            # 2. Tính giá Breakeven (BE) & Floating PnL
+            # 2. Giá Breakeven & Floating PnL của riêng ngày này
             total_lot = sum(o['lot'] for o in orders_placed)
             price_be = sum(o['lot'] * o['price'] for o in orders_placed) / total_lot
 
@@ -118,10 +113,10 @@ class GridSimulator:
             if floating_pnl < 0:
                 max_drawdown = max(max_drawdown, abs(floating_pnl))
 
-            # 3. Tính giá TP cố định theo kịch bản
+            # 3. Giá TP cố định
             tp_price = price_be + tp_be_dist if direction == 1 else price_be - tp_be_dist
 
-            # 4. Kiểm tra cắn TP trên nến M1 này
+            # 4. Kiểm tra cắn TP chuẩn
             if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
                 hit_tp = True
                 closed = True
@@ -136,14 +131,24 @@ class GridSimulator:
             final_close = exec_m1['close'].iloc[-1]
             net_profit = sum(o['lot'] * (final_close - o['price'] if direction == 1 else o['price'] - final_close) for o in orders_placed) * self.contract_size
 
-        # 6. Tính Fitness Score thuần túy
-        penalty = 500.0 if unclosed_at_12 else 0.0
-        fitness_score = net_profit - (2.0 * max_drawdown) - penalty
+        # 6. Chuẩn hóa PnL và Drawdown theo ATR Units để công bằng 100% giữa mọi ngày
+        # pnl_points = profit tính theo điểm giá Vàng
+        total_volume = sum(o['lot'] for o in orders_placed)
+        pnl_points = net_profit / (self.contract_size * total_volume)
+        dd_points = max_drawdown / (self.contract_size * total_volume)
+
+        pnl_atr = pnl_points / (atr_14 + 1e-8)
+        dd_atr = dd_points / (atr_14 + 1e-8)
+
+        penalty_atr = 15.0 if unclosed_at_12 else 0.0
+        fitness_score = pnl_atr - (2.0 * dd_atr) - penalty_atr
 
         return {
             'direction': 'SELL' if direction == -1 else 'BUY',
             'net_profit': net_profit,
             'max_drawdown': max_drawdown,
+            'pnl_atr': pnl_atr,
+            'dd_atr': dd_atr,
             'hit_tp': hit_tp,
             'hit_minute': hit_minute,
             'unclosed_at_12': unclosed_at_12,
@@ -158,9 +163,10 @@ class GridSimulator:
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Mô phỏng và chấm điểm tất cả các kịch bản tham số trên toàn bộ ngày trong tập Train (2020-2023).
+        Mỗi ngày được tính hoàn toàn độc lập.
         """
         param_grid = GridSimulator.generate_parameter_grid()
-        print(f"\n[GridSimulator] Bắt đầu quét & chấm điểm {len(param_grid)} kịch bản tham số trên tập Train (2020-2023)...")
+        print(f"\n[GridSimulator] Bắt đầu quét & chấm điểm {len(param_grid)} kịch bản tham số độc lập từng ngày...")
 
         preset_perf_stats = {
             i: {
@@ -208,7 +214,6 @@ class GridSimulator:
                     best_param = p
                     best_res = res
 
-            # Điều kiện gán nhãn ngày có lãi: best_score > 0
             is_good_day = (best_score > 0.0)
 
             rec = row.to_dict()
