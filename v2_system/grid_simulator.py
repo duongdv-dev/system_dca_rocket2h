@@ -1,14 +1,21 @@
 """
 v2_system/grid_simulator.py
 ===========================
-Engine Mô Phỏng Kịch Bản Grid/DCA Thực Tế (Realistic Quant Engine with Spread & Outlier Stretch).
+Engine Quét Hàng Loạt Sets Tham Số & Chấm Điểm Định Lượng Từng Ngày (288 Candidate Presets).
 Được thiết kế bởi Senior Quantitative Researcher.
 
-Cải Tiến Thực Tế (Realistic Enhancements):
-1. Tích hợp Spread & Commission Thực Tế: 25 pips ($0.25 / oz) cho XAUUSD.
-2. Ngưỡng Stretch Thực Sự (Outlier Stretch): step_0_ratio >= 1.5x ATR (Chỉ vào lệnh khi Vàng thực sự quá đà).
-3. Khóa Lỗ Cố Định (Hard Stop Loss): Cắt vị thế nếu giá đi vượt 2.0x ATR qua tầng lệnh cuối.
-4. Chống Fading Xu Hướng Sáng: Cấm SELL khi M15 dốc lên (bb_slope > 0.10) và cấm BUY khi M15 dốc xuống (bb_slope < -0.10).
+Nguyên lý Hoạt Động Theo Yêu Cầu User:
+1. Không gian 288 Sets tham số phong phú (Comprehensive Parameter Grid Space):
+   - step_0_ratio: [0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.4] (9 giá trị)
+   - step_exp: [1.0, 1.1, 1.2, 1.3] (4 giá trị)
+   - max_orders: [3, 4] (2 giá trị)
+   - multiplier: [1.1, 1.2, 1.3, 1.4] (4 giá trị)
+   Tổ hợp: 9 * 4 * 2 * 4 = 288 Candidate Sets.
+2. Thử nghiệm & Chấm điểm 288 Sets cho TỪNG NGÀY TRAIN:
+   - Kích hoạt Lệnh 1 khi giá nảy xa Open 10:00 đúng Step_0.
+   - TP cố định tại Giá Open 10:00 AM (price_1000).
+   - Tích hợp Spread $0.25 (25 pips) thực tế.
+3. Trích xuất Set điểm cao nhất (Winning Preset) của từng ngày để phục vụ K-Means gom nhóm & Train Model.
 """
 
 import itertools
@@ -18,23 +25,19 @@ from typing import Dict, List, Tuple, Any
 
 class GridSimulator:
     def __init__(self, contract_size: float = 100.0, spread_dollars: float = 0.25):
-        """
-        :param contract_size: 100 oz / lot
-        :param spread_dollars: Spread + Commission thực tế trên Vàng ($0.25 / oz = 25 pips)
-        """
         self.contract_size = contract_size
         self.spread_dollars = spread_dollars
 
     @staticmethod
     def generate_parameter_grid() -> List[Dict[str, float]]:
         """
-        Tạo không gian 24 kịch bản tham số thực tế & an toàn cao.
-        3 * 2 * 2 * 2 = 24 kịch bản.
+        Tạo không gian 288 kịch bản tham số phong phú để quét toàn diện.
+        9 * 4 * 2 * 4 = 288 Candidate Sets.
         """
-        step_0_ratios = [1.5, 1.8, 2.2]  # Lưới giãn rộng thực sự chống nhiễu nến
-        step_exps = [1.15, 1.3]
+        step_0_ratios = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.4]
+        step_exps = [1.0, 1.1, 1.2, 1.3]
         max_orders_list = [3, 4]
-        multipliers = [1.15, 1.25]
+        multipliers = [1.1, 1.2, 1.3, 1.4]
 
         grid = []
         for s0, se, mo, mult in itertools.product(step_0_ratios, step_exps, max_orders_list, multipliers):
@@ -56,25 +59,22 @@ class GridSimulator:
         base_lot: float = 0.1
     ) -> Dict[str, Any]:
         """
-        Mô phỏng thực tế 100% với Spread $0.25 và Cắt Lỗ Cố Định.
+        Mô phỏng 1 ngày với Set tham số params, TP cố định tại Giá Open 10:00 AM.
         """
         step_0 = params['step_0_ratio'] * atr_14
         step_exp = params['step_exp']
         max_orders = int(params['max_orders'])
         multiplier = params['multiplier']
 
-        # Hướng Mean Reversion
         direction = -1 if close_0959 >= daily_vwap else 1
 
-        price_1000 = exec_m1['open'].iloc[0] # Giá Open 10:00 AM
+        price_1000 = exec_m1['open'].iloc[0]
         
-        # Mức giá chốt lời TP có tính đến Spread $0.25 để bảo đảm đóng lệnh có lời thực sự
-        if direction == 1: # BUY -> TP khi Bid >= price_1000 + spread
+        if direction == 1:
             tp_price = price_1000 + self.spread_dollars
-        else: # SELL -> TP khi Ask <= price_1000 - spread
+        else:
             tp_price = price_1000 - self.spread_dollars
 
-        # Tính danh sách mức giá kích hoạt cho các tầng lệnh (có cộng/trừ spread)
         trigger_prices = []
         curr_p = (price_1000 - step_0) if direction == 1 else (price_1000 + step_0)
         trigger_prices.append(curr_p)
@@ -84,7 +84,6 @@ class GridSimulator:
             curr_p = curr_p - dist_i if direction == 1 else curr_p + dist_i
             trigger_prices.append(curr_p)
 
-        # Mức giá Hard Stop Loss (Nếu giá vượt quá tầng lệnh cuối + 1.5 ATR -> Cắt ngay)
         last_trig = trigger_prices[-1]
         sl_price = (last_trig - 1.5 * atr_14) if direction == 1 else (last_trig + 1.5 * atr_14)
 
@@ -102,13 +101,11 @@ class GridSimulator:
             low_t = row['low']
             close_t = row['close']
 
-            # 1. Kích hoạt các lệnh khi giá chạm trigger
             while next_order_idx < len(trigger_prices):
                 trig_p = trigger_prices[next_order_idx]
                 triggered = (direction == 1 and low_t <= trig_p) or (direction == -1 and high_t >= trig_p)
 
                 if triggered:
-                    # Giá khớp lệnh có cộng Spread thực tế
                     entry_p = (trig_p + self.spread_dollars / 2.0) if direction == 1 else (trig_p - self.spread_dollars / 2.0)
                     lot_k = base_lot * (multiplier ** next_order_idx)
                     orders_placed.append({'price': entry_p, 'lot': lot_k})
@@ -116,14 +113,12 @@ class GridSimulator:
                 else:
                     break
 
-            # 2. Nếu đã có ít nhất 1 lệnh được mở
             if len(orders_placed) > 0:
                 floating_pnl = sum(o['lot'] * (close_t - o['price'] if direction == 1 else o['price'] - close_t) for o in orders_placed) * self.contract_size
 
                 if floating_pnl < 0:
                     max_drawdown = max(max_drawdown, abs(floating_pnl))
 
-                # 3. Kiểm tra Hard Stop Loss
                 if (direction == 1 and low_t <= sl_price) or (direction == -1 and high_t >= sl_price):
                     hit_sl = True
                     closed = True
@@ -131,7 +126,6 @@ class GridSimulator:
                     net_profit = sum(o['lot'] * (sl_price - o['price'] if direction == 1 else o['price'] - sl_price) for o in orders_placed) * self.contract_size
                     break
 
-                # 4. Kiểm tra cắn TP cố định tại Giá Open 10:00 AM (có tính Spread)
                 if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
                     hit_tp = True
                     closed = True
@@ -139,7 +133,6 @@ class GridSimulator:
                     net_profit = sum(o['lot'] * (tp_price - o['price'] if direction == 1 else o['price'] - tp_price) for o in orders_placed) * self.contract_size
                     break
 
-        # 5. Xử lý Hard Exit 12:00:00
         unclosed_at_12 = False
         if len(orders_placed) > 0 and not closed:
             unclosed_at_12 = True
@@ -176,7 +169,7 @@ class GridSimulator:
         daily_m1_dict: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]]
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         param_grid = GridSimulator.generate_parameter_grid()
-        print(f"\n[GridSimulator] Quét & chấm điểm {len(param_grid)} kịch bản thực tế (Spread $0.25, Step_0 >= 1.5x ATR)...")
+        print(f"\n[GridSimulator] Bắt đầu quét & chấm điểm HÀNG LOẠT {len(param_grid)} SETS tham số trên tập Train...")
 
         preset_perf_stats = {
             i: {
@@ -207,11 +200,11 @@ class GridSimulator:
             bb_slope = row['bb_slope_m15']
             morning_momentum = row['morning_momentum']
 
-            # Bộ Lọc An Toàn Xu Hướng Thực Tế (Trend Safety Filters)
-            is_trend_sell_conflict = (bb_slope > 0.10 and vwap_dist_atr > 0)
-            is_trend_buy_conflict = (bb_slope < -0.10 and vwap_dist_atr < 0)
+            # Bộ Lọc An Toàn Xu Hướng Sáng
+            is_trend_sell_conflict = (bb_slope > 0.12 and vwap_dist_atr > 0)
+            is_trend_buy_conflict = (bb_slope < -0.12 and vwap_dist_atr < 0)
             
-            if abs(vwap_dist_atr) < 0.50 or abs(bb_zscore) > 2.5 or morning_momentum > 0.55 or is_trend_sell_conflict or is_trend_buy_conflict:
+            if abs(vwap_dist_atr) < 0.40 or abs(bb_zscore) > 2.6 or morning_momentum > 0.65 or is_trend_sell_conflict or is_trend_buy_conflict:
                 rec = row.to_dict()
                 rec['best_fitness_score'] = -100.0
                 rec['is_profitable'] = 0
@@ -228,6 +221,7 @@ class GridSimulator:
             best_param = None
             best_res = None
 
+            # Thử nghiệm TẤT CẢ 288 Sets trên nến M1 ngày hôm nay
             for i, p in enumerate(param_grid):
                 res = self.simulate_day_scenario(exec_df, atr_14, close_0959, daily_vwap, p)
                 
@@ -245,6 +239,7 @@ class GridSimulator:
                     best_param = p
                     best_res = res
 
+            # Điều kiện trích xuất Set điểm cao nhất ngày: best_score > 0 và đã có khớp ít nhất 1 lệnh
             is_good_day = (best_score > 0.0) and (best_res is not None and best_res['num_orders'] > 0)
 
             rec = row.to_dict()
@@ -276,16 +271,16 @@ class GridSimulator:
         ranked_presets.sort(key=lambda x: x['total_score'], reverse=True)
 
         print("\n=========================================================================================================")
-        print(" 📊 BẢNG CHẤM ĐIỂM TOP 10 PRESETS THỰC TẾ (SPREAD $0.25, STEP_0 >= 1.5x ATR)")
+        print(" 📊 BẢNG CHẤM ĐIỂM TOP 10 SETS XUẤT SẮC NHẤT TRONG TỔNG SỐ 288 CANDIDATE SETS TẬP TRAIN")
         print("=========================================================================================================")
-        print(" | Hạng | Step_0 | Step_Exp | Max_Orders | Multiplier | Tổng PnL ($) | Win Rate (%) | Max DD ($) |")
-        print(" +------+--------+----------+------------+------------+--------------+--------------+------------+")
+        print(" | Hạng | Step_0 | Step_Exp | Max_Orders | Multiplier | Tổng PnL ($) | Win Rate (%) | Max DD ($) | Score Tong |")
+        print(" +------+--------+----------+------------+------------+--------------+--------------+------------+------------+")
 
         for rank_idx, item in enumerate(ranked_presets[:10], start=1):
             p = item['params']
             w_rate = (item['win_days'] / max(1, item['total_days'])) * 100.0
-            print(f" | {rank_idx:<4} | {p['step_0_ratio']:<6.1f} | {p['step_exp']:<8.2f} | {int(p['max_orders']):<10} | {p['multiplier']:<10.1f} | {item['total_pnl']:<12,.2f} | {w_rate:<12.1f} | {item['total_dd']:<10,.2f} |")
+            print(f" | {rank_idx:<4} | {p['step_0_ratio']:<6.1f} | {p['step_exp']:<8.2f} | {int(p['max_orders']):<10} | {p['multiplier']:<10.1f} | {item['total_pnl']:<12,.2f} | {w_rate:<12.1f} | {item['total_dd']:<10,.2f} | {item['total_score']:<10,.1f} |")
         print("=========================================================================================================\n")
-        print(f"[GridSimulator] Tổng số ngày quan sát Train: {len(labeled_df)} ngày | Số ngày đạt Best Score > 0: {len(best_params_df)} ngày")
+        print(f"[GridSimulator] Tổng ngày train: {len(labeled_df)} ngày | Số ngày trích xuất được Set xuất sắc (>0 score): {len(best_params_df)} ngày")
 
         return labeled_df, best_params_df
