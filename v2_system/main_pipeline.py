@@ -1,17 +1,16 @@
 """
 v2_system/main_pipeline.py
 ==========================
-Master Main Pipeline Script với Rolling Walk-Forward Engine cho Hệ Thống XAUUSD Grid/DCA (v2).
+Master Main Pipeline Script cho Training & Backtest Kiểm Định (v2).
 Được thiết kế bởi Senior Quantitative Researcher & Systems Trading Engineer.
 
-Quy trình Vận Hành Thuần Định Lượng (Quantitative Workflow):
+Tập trung 100% vào kiểm tra Training & Backtest (Bỏ qua đóng gói ONNX):
 1. Tải dữ liệu M1 (2020-2023 Train, 2024-2025 Test) và trích xuất đặc trưng chuẩn hóa dừng.
 2. CHẠY ROLLING WALK-FORWARD VALIDATION (2020-2023):
    - Train 6 tháng -> Test 6 tháng tiếp theo (Cuộn 7 cửa sổ bán niên).
-   - Kiểm tra tính tổng quát & chọn bộ tham số tối ưu qua các chu kỳ thị trường.
-3. HUẤN LUYỆN MASTER MODEL (Full Train 2020-2023) & Xuất `model.onnx`.
-4. CHẠY TEST CUỐI KỲ 2 NĂM OUT-OF-SAMPLE (2024-2025):
-   - Đánh giá hiệu năng thực tế trên 2 năm 2024-2025.
+3. HUẤN LUYỆN MASTER MODEL (Full Train 2020-2023).
+4. CHẠY TEST CUỐI KỲ 2 NĂM OUT-OF-SAMPLE (2024-2025).
+5. Xuất báo cáo CSV & Biểu đồ Equity Curve kiểm định.
 """
 
 import os
@@ -37,7 +36,7 @@ def run_main_pipeline():
     test_files = sorted(glob.glob(os.path.join(base_dir, "XAUUSD_202[4-5]_m1.csv")))
 
     print("\n==================================================================")
-    print(" 🚀 HỆ THỐNG XAUUSD INTRADAY GRID/DCA (v2) - WALK-FORWARD PIPELINE")
+    print(" 🚀 HỆ THỐNG XAUUSD INTRADAY GRID/DCA (v2) - TRAINING & BACKTEST EVALUATION")
     print("==================================================================")
     print(f" • File Train (2020-2023): {[os.path.basename(f) for f in train_files]}")
     print(f" • File Test  (2024-2025): {[os.path.basename(f) for f in test_files]}\n")
@@ -70,9 +69,9 @@ def run_main_pipeline():
     )
     wf_trades_df, wf_metrics = wf_engine.run_walk_forward_process(train_feature_df, train_m1_dict)
 
-    # 3. PHẦN 3: MASTER MODEL TRAINING (FULL 2020-2023) & ONNX EXPORT
+    # 3. PHẦN 3: MASTER MODEL TRAINING (FULL 2020-2023)
     print("------------------------------------------------------------------")
-    print(" 🤖 PHẦN 3: HUẤN LUYỆN MASTER MODEL (FULL 2020-2023) & XUẤT ONNX")
+    print(" 🤖 PHẦN 3: HUẤN LUYỆN MASTER MODEL (FULL 2020-2023)")
     print("------------------------------------------------------------------")
     simulator = GridSimulator()
     labeled_df, best_params_df = simulator.evaluate_training_set(train_feature_df, train_m1_dict)
@@ -84,9 +83,6 @@ def run_main_pipeline():
     trainer = MLTrainer(feature_cols=feature_cols)
     trainer.check_feature_drift(train_feature_df, test_feature_df)
     trainer.train_lightgbm(train_dataset)
-
-    onnx_path = os.path.join(v2_dir, "model.onnx")
-    trainer.export_to_onnx(onnx_path)
 
     # 4. PHẦN 4: FINAL OUT-OF-SAMPLE TEST (2 NĂM CUỐI 2024-2025)
     print("------------------------------------------------------------------")
@@ -123,7 +119,7 @@ def run_main_pipeline():
     report_path = os.path.join(v2_dir, "oos_trades_report.csv")
     test_trades_df.to_csv(report_path, index=False)
     print(f"[MainPipeline] Đã lưu báo cáo chi tiết giao dịch -> {report_path}")
-    print("\n[MainPipeline] Hoàn tất toàn bộ quy trình Walk-Forward Pipeline!")
+    print("\n[MainPipeline] Hoàn tất toàn bộ quy trình Training & Backtest Evaluation!")
 
 if __name__ == '__main__':
     run_main_pipeline()
