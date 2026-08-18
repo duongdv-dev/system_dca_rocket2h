@@ -1,17 +1,16 @@
 """
 v2_system/backtest_engine.py
 =============================
-Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - Alpha & Smart Exit).
+Out-of-Sample Backtest Engine cho Hệ Thống XAUUSD Grid/DCA (v2 - Trend Alignment Safety).
 Được thiết kế bởi Senior Quantitative Researcher.
 
 Chức năng:
 1. Chạy mô phỏng thực thi chi tiết trên dữ liệu nến M1 tập Test (2024-2025).
-2. Tích hợp 4 lớp quản trị rủi ro & vận hành sản xuất:
-   - VWAP Stretch & Morning Trend Filter: Chỉ trade khi giá 09:59 lệch xa VWAP (abs >= 0.5 ATR).
+2. Tích hợp 4 lớp bảo vệ rủi ro:
+   - Trend Alignment Safety: Cấm SELL ngược xu hướng tăng (bb_slope > 0.15) và Cấm BUY ngược xu hướng giảm.
    - Dynamic Risk Engine: Khóa cứng rủi ro Max Loss <= 2% Balance cho mỗi phiên.
-   - Dynamic Smart Exit Engine: Chốt lời thu hẹp sau phút 75 (11:15 VN) & Đóng khi PnL > 0 / hòa vốn trước 12:00.
+   - Dynamic Trailing TP: Chốt lời sát Breakeven ngay khi nhồi từ lệnh thứ 2 trở đi.
    - Hard Exit: Cưỡng chế đóng 100% vị thế lúc 12:00:00.
-3. Xuất báo cáo hiệu năng đầy đủ đến console stdout.
 """
 
 import os
@@ -44,12 +43,11 @@ class OOSBacktestEngine:
         daily_trades = []
 
         print("\n==================================================================")
-        print(" 🧪 BẮT ĐẦU RUN OUT-OF-SAMPLE BACKTEST (2024 - 2025)")
+        print(" 🧪 RUNNING OUT-OF-SAMPLE BACKTEST WITH TREND ALIGNMENT SAFETY")
         print("==================================================================")
         print(f" • Vốn ban đầu:            ${self.initial_balance:,.2f}")
         print(f" • Khung giờ thực thi:      10:00 - 12:00 (Giờ Việt Nam, UTC+7)")
         print(f" • Dynamic Risk Engine:    Khóa cứng Max Loss <= {self.risk_pct_per_session*100:.1f}% Balance / phiên")
-        print(f" • Smart Exit Engine:      Chốt lời linh hoạt sau phút 75 (11:15 VN)")
         print(f" • Hard Exit:              Đóng 100% vị thế tại 12:00:00 VN\n")
 
         for idx, row in test_feature_df.iterrows():
@@ -65,9 +63,14 @@ class OOSBacktestEngine:
             daily_vwap = row['daily_vwap']
             vwap_dist_atr = row['vwap_dist_atr']
             bb_zscore = row['bb_zscore_m15']
+            bb_slope = row['bb_slope_m15']
+            morning_momentum = row['morning_momentum']
 
-            # Lọc Alpha: Bắt buộc giá 09:59 lệch xa VWAP (abs >= 0.5) và không có bùng nổ xu hướng sáng
-            if abs(vwap_dist_atr) < 0.50 or abs(bb_zscore) > 2.6:
+            # Trend Alignment Safety Filters:
+            is_trend_sell_conflict = (bb_slope > 0.15 and vwap_dist_atr > 0)
+            is_trend_buy_conflict = (bb_slope < -0.15 and vwap_dist_atr < 0)
+
+            if abs(vwap_dist_atr) < 0.50 or abs(bb_zscore) > 2.6 or morning_momentum > 0.65 or is_trend_sell_conflict or is_trend_buy_conflict:
                 pred_class = 0
 
             # Trường hợp 0: No-Trade
@@ -121,12 +124,10 @@ class OOSBacktestEngine:
             hit_tp = False
             exit_reason = 'Hard Exit 12:00'
             closed_before_12 = False
-            total_candles = len(exec_m1)
 
             for m_idx, (t, r) in enumerate(exec_m1.iterrows()):
                 high_t = r['high']
                 low_t = r['low']
-                close_t = r['close']
 
                 # 1. Kích hoạt lệnh mới
                 while next_order_idx < len(next_trigger_prices):
@@ -139,13 +140,19 @@ class OOSBacktestEngine:
                     else:
                         break
 
-                # 2. Tính giá Breakeven (BE) & PnL trạng thái hiện tại
+                # 2. Tính giá Breakeven (BE) hiện tại
                 total_lot = sum(o['lot'] for o in orders_placed)
                 price_be = sum(o['lot'] * o['price'] for o in orders_placed) / total_lot
 
-                floating_pnl = sum(o['lot'] * (close_t - o['price'] if direction == 1 else o['price'] - close_t) for o in orders_placed) * self.contract_size
+                # 3. Dynamic Trailing TP cho lệnh nhồi
+                if len(orders_placed) >= 2:
+                    current_tp_be_dist = initial_tp_be_dist * 0.70
+                else:
+                    current_tp_be_dist = initial_tp_be_dist
 
-                # 3. Risk Engine 2% Cut
+                tp_price = price_be + current_tp_be_dist if direction == 1 else price_be - current_tp_be_dist
+
+                # 4. Risk Engine 2% Cut
                 if direction == 1:
                     worst_floating_pnl = sum(o['lot'] * (low_t - o['price']) for o in orders_placed) * self.contract_size
                 else:
@@ -157,28 +164,7 @@ class OOSBacktestEngine:
                     closed_before_12 = True
                     break
 
-                # 4. Smart Exit Engine Logic
-                if m_idx < 75:
-                    tp_dist = initial_tp_be_dist
-                elif m_idx < 105:
-                    tp_dist = initial_tp_be_dist * 0.25
-                    if floating_pnl > 0:
-                        hit_tp = True
-                        closed_before_12 = True
-                        exit_reason = 'Smart Exit (Profit > 0)'
-                        session_pnl = floating_pnl
-                        break
-                else:
-                    tp_dist = initial_tp_be_dist * 0.1
-                    if floating_pnl >= -10.0:
-                        closed_before_12 = True
-                        exit_reason = 'Smart Exit (Near Breakeven)'
-                        session_pnl = floating_pnl
-                        break
-
-                tp_price = price_be + tp_dist if direction == 1 else price_be - tp_dist
-
-                # 5. Kiểm tra cắn TP chuẩn
+                # 5. Kiểm tra cắn TP
                 if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
                     hit_tp = True
                     closed_before_12 = True
@@ -245,7 +231,6 @@ class OOSBacktestEngine:
                 }
 
         risk_cuts = (trades_df['exit_reason'] == 'Risk Engine Cut (2%)').sum()
-        smart_exits = (trades_df['exit_reason'].str.contains('Smart Exit')).sum()
         normal_tp_hits = (trades_df['exit_reason'] == 'TP Hit').sum()
         hard_exits = (trades_df['exit_reason'] == 'Hard Exit 12:00').sum()
 
@@ -264,34 +249,20 @@ class OOSBacktestEngine:
             'total_return_pct': total_return_pct,
             'preset_stats': preset_stats,
             'risk_cuts': risk_cuts,
-            'smart_exits': smart_exits,
             'normal_tp_hits': normal_tp_hits,
             'hard_exits': hard_exits
         }
 
         print("\n==================================================================")
-        print(" 📊 BÁO CÁO KẾT QUẢ KHI CHẠY BACKTEST 2 NĂM 2024 - 2025 (OUT-OF-SAMPLE)")
+        print(" 📊 OOS BACKTEST REPORT (2024 - 2025)")
         print("==================================================================")
-        print(f" 💰 Vốn ban đầu (Initial Balance):   ${self.initial_balance:,.2f}")
-        print(f" 🚀 Số dư cuối kỳ (Final Balance):   ${current_balance:,.2f}")
-        print(f" 🔥 Tổng lợi nhuận Net Return %:    +{total_return_pct:.2f}% (+${current_balance - self.initial_balance:,.2f})")
+        print(f" 💰 Initial Balance:                 ${self.initial_balance:,.2f}")
+        print(f" 🚀 Final Balance:                   ${current_balance:,.2f}")
+        print(f" 🔥 Net Return %:                    +{total_return_pct:.2f}% (+${current_balance - self.initial_balance:,.2f})")
         print(f" ------------------------------------------------------------------")
-        print(f" • Tổng số ngày quan sát:            {total_days} ngày")
-        print(f" • Tỷ lệ ngày No-Trade (Bảo vệ vốn): {no_trade_pct:.2f}% ({no_trade_days}/{total_days} ngày)")
-        print(f" • Số ngày vào lệnh thực tế:         {traded_days} ngày")
-        print(f" • Win Rate (Tỷ lệ thắng):           {win_rate:.2f}% ({len(win_trades)} thắng / {len(loss_trades)} thua)")
-        print(f" • Profit Factor (Hệ số Lời/Lỗ):    {profit_factor:.2f}")
-        print(f" • Max Drawdown % (Peak-to-Trough):  {max_drawdown_pct:.2f}%")
-        print(f" ------------------------------------------------------------------")
-        print(" 📌 HIỆU NĂNG THEO TỪNG PRESET CHIẾN THUẬT:")
-        for p_class, p_data in preset_stats.items():
-            print(f"    - Preset {p_class} [{p_data['name']}]: {p_data['count']} phiên | WinRate: {p_data['winrate']:.1f}% | Net PnL: +${p_data['pnl']:,.2f}")
-        print(f" ------------------------------------------------------------------")
-        print(" 🛡️ PHÂN BỐ LÝ DO ĐÓNG VỊ THẾ:")
-        print(f"    - Chốt lời tiêu chuẩn (TP Hit):    {normal_tp_hits} phiên")
-        print(f"    - Smart Exit (Thu hồi vốn sớm):   {smart_exits} phiên")
-        print(f"    - Cắt lỗ khẩn cấp Risk Engine 2%: {risk_cuts} phiên")
-        print(f"    - Hard Exit cưỡng chế lúc 12:00:  {hard_exits} phiên")
+        print(f" • Win Rate:                         {win_rate:.2f}% ({len(win_trades)} W / {len(loss_trades)} L)")
+        print(f" • Profit Factor:                    {profit_factor:.2f}")
+        print(f" • Max Drawdown %:                  {max_drawdown_pct:.2f}%")
         print("==================================================================\n")
 
         return trades_df, metrics
