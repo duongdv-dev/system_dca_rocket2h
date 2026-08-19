@@ -3,11 +3,6 @@ v2_system/run_one_day_diagnostic.py
 ===================================
 Script Mô Phỏng & In FULL Chấm Điểm 288 Chiến Thuật Tham Số (Full Strategy Scoring & Ranking).
 Được thiết kế bởi Senior Quantitative Researcher.
-
-Chức năng:
-1. Chạy mô phỏng TOÀN BỘ 288 Candidate Strategies / Parameter Presets cho 1 ngày bất kỳ (hoặc All Days).
-2. Chấm điểm Fitness Score cho TẤT CẢ 288 chiến thuật dựa trên nến M1 (10:00 - 12:00 VN).
-3. Xếp hạng & In bảng FULL Ranking từ Chiến thuật Xuất Sắc Nhất đến Kém Nhất.
 """
 
 import os
@@ -35,8 +30,18 @@ def run_full_strategy_diagnostic(target_date: str = None):
         print("❌ Không tìm thấy dữ liệu hợp lệ!")
         return
 
+    # Nếu không chỉ định ngày, tự động tìm ngày ĐẦU TIÊN CÓ LỆNH KHỚP THỰC TẾ
     if target_date is None or target_date not in daily_m1_dict:
-        target_date = feature_df['date'].iloc[0]
+        simulator_temp = GridSimulator()
+        found_date = None
+        for d_str in feature_df['date']:
+            obs_t, exec_t = daily_m1_dict[d_str]
+            r_t = feature_df[feature_df['date'] == d_str].iloc[0]
+            test_res = simulator_temp.simulate_day_scenario(exec_t, r_t['atr_14_m15'], r_t['close_0959'], r_t['daily_vwap'], {'step_0_ratio': 0.6, 'step_exp': 1.1, 'max_orders': 4, 'multiplier': 1.2})
+            if test_res['num_orders'] > 0:
+                found_date = d_str
+                break
+        target_date = found_date if found_date else feature_df['date'].iloc[0]
 
     row = feature_df[feature_df['date'] == target_date].iloc[0]
     obs_df, exec_df = daily_m1_dict[target_date]
@@ -53,11 +58,15 @@ def run_full_strategy_diagnostic(target_date: str = None):
     direction = -1 if close_0959 >= daily_vwap else 1
     dir_str = "SELL (Kỳ vọng giảm về Open 10:00)" if direction == -1 else "BUY (Kỳ vọng tăng về Open 10:00)"
 
+    min_low_10_12 = exec_df['low'].min()
+    max_high_10_12 = exec_df['high'].max()
+
     print("\n=========================================================================================================")
     print(f" 🔍 QUÉT FULL TẤT CẢ 288 CHIẾN THUẬT & CHẤM ĐIỂM NGÀY: {target_date}")
     print("=========================================================================================================")
     print(f" 1. TỔNG QUAN CHỈ SỐ THỊ TRƯỜNG LÚC 09:59:59 AM:")
     print(f"    • Giá Open 10:00 AM (price_1000): ${price_1000:,.2f}")
+    print(f"    • Biến động M1 (10:00 - 12:00):  Min Low = ${min_low_10_12:,.2f} | Max High = ${max_high_10_12:,.2f}")
     print(f"    • Giá Close 09:59 AM:            ${close_0959:,.2f}")
     print(f"    • Daily VWAP:                    ${daily_vwap:,.2f} (Lệch VWAP: {vwap_dist_atr:+.2f}x ATR)")
     print(f"    • ATR(14) M15:                   ${atr_14:,.2f}")
@@ -77,8 +86,14 @@ def run_full_strategy_diagnostic(target_date: str = None):
         res['params'] = p
         strategy_results.append(res)
 
-    # Sắp xếp xếp hạng theo Fitness Score từ cao nhất xuống thấp nhất
-    strategy_results.sort(key=lambda x: x['fitness_score'], reverse=True)
+    # Ưu tiên xếp hạng những chiến thuật CÓ KHỚP LỆNH và CÓ ĐIỂM CAO
+    strategy_results.sort(key=lambda x: (x['num_orders'] > 0, x['fitness_score']), reverse=True)
+
+    traded_strategies = [s for s in strategy_results if s['num_orders'] > 0]
+    if not traded_strategies:
+        min_step0_needed = abs(min_low_10_12 - price_1000) / atr_14 if direction == 1 else abs(max_high_10_12 - price_1000) / atr_14
+        print(f"    ⚠️ GHI CHÚ ĐỊNH LƯỢNG: Ngày {target_date} Vàng chỉ biến động tối đa {min_step0_needed:.2f}x ATR từ Open 10:00.")
+        print(f"    👉 Do Vàng không nảy giãn đủ khoảng cách Step_0 tối thiểu (0.6x ATR = ${0.6*atr_14:.2f}), hệ thống ĐỨNG NGOÀI (NO-TRADE) bảo vệ vốn 100%!\n")
 
     print("\n 3. BẢNG XẾP HẠNG TOP 20 CHIẾN THUẬT ĐẠT ĐIỂM FITNESS SCORE CAO NHẤT:")
     print(" -----------------------------------------------------------------------------------------------------------------")
@@ -100,7 +115,6 @@ def run_full_strategy_diagnostic(target_date: str = None):
     print(f"    • Max Drawdown      : ${winner['max_drawdown']:,.2f}")
     print(f"    • Số lệnh đã khớp   : {winner['num_orders']} lệnh\n")
 
-    # Lưu toàn bộ báo cáo 288 chiến thuật ra file text
     report_file = os.path.join(base_dir, "v2_system", f"full_strategy_scoring_{target_date}.txt")
     with open(report_file, "w", encoding="utf-8") as f:
         f.write(f"=========================================================================================================\n")
