@@ -1,8 +1,13 @@
 """
 v2_system/run_one_day_diagnostic.py
 ===================================
-Script Mô Phỏng 1 Ngày Chi Tiết Từng Phút (Single Day Diagnostic Inspector - Fixed Timestamp).
+Script Mô Phỏng & In FULL Chấm Điểm 288 Chiến Thuật Tham Số (Full Strategy Scoring & Ranking).
 Được thiết kế bởi Senior Quantitative Researcher.
+
+Chức năng:
+1. Chạy mô phỏng TOÀN BỘ 288 Candidate Strategies / Parameter Presets cho 1 ngày bất kỳ (hoặc All Days).
+2. Chấm điểm Fitness Score cho TẤT CẢ 288 chiến thuật dựa trên nến M1 (10:00 - 12:00 VN).
+3. Xếp hạng & In bảng FULL Ranking từ Chiến thuật Xuất Sắc Nhất đến Kém Nhất.
 """
 
 import os
@@ -16,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data_pipeline import DataPipeline
 from grid_simulator import GridSimulator
 
-def run_single_day_diagnostic(target_date: str = None):
+def run_full_strategy_diagnostic(target_date: str = None):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     test_files = sorted(glob.glob(os.path.join(base_dir, "XAUUSD_2024_m1.csv"))) + sorted(glob.glob(os.path.join(base_dir, "XAUUSD_2025_m1.csv")))
 
@@ -49,9 +54,9 @@ def run_single_day_diagnostic(target_date: str = None):
     dir_str = "SELL (Kỳ vọng giảm về Open 10:00)" if direction == -1 else "BUY (Kỳ vọng tăng về Open 10:00)"
 
     print("\n=========================================================================================================")
-    print(f" 🔍 KỊCH BẢN MÔ PHỎNG CHI TIẾT 1 NGÀY QUAN SÁT: {target_date}")
+    print(f" 🔍 QUÉT FULL TẤT CẢ 288 CHIẾN THUẬT & CHẤM ĐIỂM NGÀY: {target_date}")
     print("=========================================================================================================")
-    print(f" 1. CHỈ SỐ THỊ TRƯỜNG LÚC 09:59:59 AM:")
+    print(f" 1. TỔNG QUAN CHỈ SỐ THỊ TRƯỜNG LÚC 09:59:59 AM:")
     print(f"    • Giá Open 10:00 AM (price_1000): ${price_1000:,.2f}")
     print(f"    • Giá Close 09:59 AM:            ${close_0959:,.2f}")
     print(f"    • Daily VWAP:                    ${daily_vwap:,.2f} (Lệch VWAP: {vwap_dist_atr:+.2f}x ATR)")
@@ -60,103 +65,58 @@ def run_single_day_diagnostic(target_date: str = None):
     print(f"    • Động lượng phiên sáng:         Momentum = {morning_momentum:.2f}")
     print(f"    👉 Hướng Giao Dịch Quyết Định:   {dir_str}\n")
 
-    step_0 = 1.2 * atr_14
-    step_exp = 1.2
-    max_orders = 4
-    multiplier = 1.20
-    spread_dollars = 0.25
+    simulator = GridSimulator()
+    param_grid = GridSimulator.generate_parameter_grid()
 
-    if direction == 1:
-        tp_price = price_1000 + spread_dollars
-    else:
-        tp_price = price_1000 - spread_dollars
+    print(f" 2. ĐANG THỬ NGHIỆM TẤT CẢ {len(param_grid)} CHIẾN THUẬT THAM SỐ TRÊN NẾN M1 (10:00 - 12:00)...")
 
-    trigger_prices = []
-    curr_p = (price_1000 - step_0) if direction == 1 else (price_1000 + step_0)
-    trigger_prices.append(curr_p)
+    strategy_results = []
+    for p_idx, p in enumerate(param_grid, start=1):
+        res = simulator.simulate_day_scenario(exec_df, atr_14, close_0959, daily_vwap, p)
+        res['preset_idx'] = p_idx
+        res['params'] = p
+        strategy_results.append(res)
 
-    for i in range(1, max_orders):
-        dist_i = step_0 * (step_exp ** i)
-        curr_p = curr_p - dist_i if direction == 1 else curr_p + dist_i
-        trigger_prices.append(curr_p)
+    # Sắp xếp xếp hạng theo Fitness Score từ cao nhất xuống thấp nhất
+    strategy_results.sort(key=lambda x: x['fitness_score'], reverse=True)
 
-    print(" 2. THÔNG SỐ LƯỚI DCA ĐÃ CẤU HÌNH KHỚP:")
-    print(f"    • Mức giá Chốt Lời (TP Target cố định): ${tp_price:,.2f}")
-    for i, tp_val in enumerate(trigger_prices, start=1):
-        print(f"    • Trigger Price Order {i}: ${tp_val:,.2f}")
+    print("\n 3. BẢNG XẾP HẠNG TOP 20 CHIẾN THUẬT ĐẠT ĐIỂM FITNESS SCORE CAO NHẤT:")
+    print(" -----------------------------------------------------------------------------------------------------------------")
+    print(" | Hạng | Set ID | Step_0 | Step_Exp | Max_Ord | Multiplier | Lệnh Khớp | Kết Quả M1 | Net PnL ($) | Max DD ($) | Score  |")
+    print(" +------+--------+--------+----------+---------+------------+-----------+------------+-------------+------------+--------+")
 
-    print("\n 3. NHẬT KÝ THỰC THI TỪNG PHÚT (10:00:00 - 12:00:00):")
-    print(" ---------------------------------------------------------------------------------------------------------")
-    print(" | Phút | Thời Gian VN | Giá M1 High | Giá M1 Low | Lệnh Khớp Mới | Lớp Lệnh | PnL Trạng Thái ($) | Trạng Thái   |")
-    print(" +------+--------------+-------------+------------+---------------+----------+--------------------+--------------+")
+    for rank, s in enumerate(strategy_results[:20], start=1):
+        p = s['params']
+        outcome = f"Hit TP (m{s['hit_minute']})" if s['hit_tp'] else ("Chưa khớp Order 1" if s['num_orders']==0 else "Kẹt 12:00")
+        print(f" | {rank:<4} | P_{s['preset_idx']:<4} | {p['step_0_ratio']:<6.1f} | {p['step_exp']:<8.2f} | {int(p['max_orders']):<7} | {p['multiplier']:<10.1f} | {s['num_orders']:<9} | {outcome:<10} | {s['net_profit']:<11,.2f} | {s['max_drawdown']:<10,.2f} | {s['fitness_score']:<6.1f} |")
+    print(" -----------------------------------------------------------------------------------------------------------------")
 
-    orders_placed = []
-    next_order_idx = 0
-    closed = False
-    hit_tp = False
-    net_profit = 0.0
-    contract_size = 100.0
+    winner = strategy_results[0]
+    wp = winner['params']
+    print(f"\n 🏆 CHIẾN THUẬT CHIẾN THẮNG NGÀY {target_date}: Set P_{winner['preset_idx']}")
+    print(f"    • Step_0: {wp['step_0_ratio']}x ATR | Step_Exp: {wp['step_exp']} | Max_Orders: {int(wp['max_orders'])} | Multiplier: {wp['multiplier']}x")
+    print(f"    • Điểm Fitness Score: {winner['fitness_score']:.1f}")
+    print(f"    • Lợi Nhuận Net PnL : +${winner['net_profit']:,.2f}")
+    print(f"    • Max Drawdown      : ${winner['max_drawdown']:,.2f}")
+    print(f"    • Số lệnh đã khớp   : {winner['num_orders']} lệnh\n")
 
-    for m_idx, (t, row) in enumerate(exec_df.iterrows()):
-        # Lấy timestamp an toàn không bị lỗi 'int' object has no attribute 'strftime'
-        if 'datetime' in row:
-            time_str = pd.to_datetime(row['datetime']).strftime('%H:%M:%S')
-        elif 'time' in row:
-            time_str = pd.to_datetime(row['time']).strftime('%H:%M:%S')
-        elif isinstance(t, (pd.Timestamp, str)):
-            time_str = pd.to_datetime(t).strftime('%H:%M:%S')
-        else:
-            time_str = f"10:{m_idx:02d}:00" if m_idx < 60 else f"11:{m_idx-60:02d}:00"
+    # Lưu toàn bộ báo cáo 288 chiến thuật ra file text
+    report_file = os.path.join(base_dir, "v2_system", f"full_strategy_scoring_{target_date}.txt")
+    with open(report_file, "w", encoding="utf-8") as f:
+        f.write(f"=========================================================================================================\n")
+        f.write(f" 📊 BÁO CÁO FULL CHẤM ĐIỂM TẤT CẢ {len(param_grid)} CHIẾN THUẬT - NGÀY {target_date}\n")
+        f.write(f"=========================================================================================================\n\n")
+        f.write(" | Hạng | Set ID | Step_0 | Step_Exp | Max_Ord | Multiplier | Lệnh Khớp | Kết Quả M1 | Net PnL ($) | Max DD ($) | Score  |\n")
+        f.write(" +------+--------+--------+----------+---------+------------+-----------+------------+-------------+------------+--------+\n")
+        for rank, s in enumerate(strategy_results, start=1):
+            p = s['params']
+            outcome = f"Hit TP (m{s['hit_minute']})" if s['hit_tp'] else ("Chưa khớp Order 1" if s['num_orders']==0 else "Kẹt 12:00")
+            f.write(f" | {rank:<4} | P_{s['preset_idx']:<4} | {p['step_0_ratio']:<6.1f} | {p['step_exp']:<8.2f} | {int(p['max_orders']):<7} | {p['multiplier']:<10.1f} | {s['num_orders']:<9} | {outcome:<10} | {s['net_profit']:<11,.2f} | {s['max_drawdown']:<10,.2f} | {s['fitness_score']:<6.1f} |\n")
 
-        high_t = row['high']
-        low_t = row['low']
-        close_t = row['close']
-        new_order_str = "-"
-
-        # Kích hoạt lệnh lưới
-        while next_order_idx < len(trigger_prices):
-            trig_p = trigger_prices[next_order_idx]
-            triggered = (direction == 1 and low_t <= trig_p) or (direction == -1 and high_t >= trig_p)
-
-            if triggered:
-                entry_p = (trig_p + spread_dollars / 2.0) if direction == 1 else (trig_p - spread_dollars / 2.0)
-                lot_k = 0.1 * (multiplier ** next_order_idx)
-                orders_placed.append({'price': entry_p, 'lot': lot_k})
-                new_order_str = f"Order {next_order_idx+1} ({lot_k:.2f} lot)"
-                next_order_idx += 1
-            else:
-                break
-
-        floating_pnl = 0.0
-        if len(orders_placed) > 0:
-            floating_pnl = sum(o['lot'] * (close_t - o['price'] if direction == 1 else o['price'] - close_t) for o in orders_placed) * contract_size
-
-        status_str = "Đang chạy"
-        
-        # Kiểm tra TP
-        if len(orders_placed) > 0 and ((direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price)):
-            hit_tp = True
-            closed = True
-            net_profit = sum(o['lot'] * (tp_price - o['price'] if direction == 1 else o['price'] - tp_price) for o in orders_placed) * contract_size
-            status_str = "🎉 HIT TP!"
-            print(f" | {m_idx:<4} | {time_str:<12} | {high_t:<11.2f} | {low_t:<10.2f} | {new_order_str:<13} | {len(orders_placed):<8} | {net_profit:<18,.2f} | {status_str:<12} |")
-            break
-
-        if new_order_str != "-" or m_idx % 15 == 0 or m_idx == len(exec_df) - 1:
-            print(f" | {m_idx:<4} | {time_str:<12} | {high_t:<11.2f} | {low_t:<10.2f} | {new_order_str:<13} | {len(orders_placed):<8} | {floating_pnl:<18,.2f} | {status_str:<12} |")
-
-    if not closed and len(orders_placed) > 0:
-        final_close = exec_df['close'].iloc[-1]
-        net_profit = sum(o['lot'] * (final_close - o['price'] if direction == 1 else o['price'] - final_close) for o in orders_placed) * contract_size
-
-    print(" ---------------------------------------------------------------------------------------------------------")
-    print(" 4. TỔNG KẾT BÁO CÁO NGÀY:")
-    print(f"    • Số lệnh khớp thực tế:  {len(orders_placed)} lệnh")
-    print(f"    • Trạng thái cắn TP:     {hit_tp}")
-    print(f"    • Lợi nhuận Net PnL:     {'+' if net_profit>=0 else ''}${net_profit:,.2f}")
+    print(f" 📂 Báo cáo FULL 288 chiến thuật đã được lưu tại: {report_file}")
     print("=========================================================================================================\n")
 
 
 if __name__ == '__main__':
     target = sys.argv[1] if len(sys.argv) > 1 else None
-    run_single_day_diagnostic(target)
+    run_full_strategy_diagnostic(target)
