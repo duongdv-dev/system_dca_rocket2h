@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  v3_jan2020:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: xauusd-grid-v3:latest
+    container_name: xauusd_grid_v3_jan2020
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    command: python -u v3_system/run_jan2020_v3.py
+
   v2_pipeline:
     build:
       context: .
@@ -8,7 +21,6 @@ services:
     image: xauusd-grid-v2:latest
     container_name: xauusd_grid_v2_container
     volumes:
-      # Mount thư mục dự án để đọc các file CSV nến M1 và xuất model.onnx/report
       - .:/app
     environment:
       - PYTHONUNBUFFERED=1
