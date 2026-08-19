@@ -1,8 +1,12 @@
 """
 v3_system/run_jan2020_v3.py
 ============================
-Script Chạy Chi Tiết Từng Ngày & In Tổng Hợp Tháng 1/2020 (v3 Architecture - Fixed Typo).
+Script In Trực Tiếp Bảng Ma Trận Diễn Biến PnL 22 Ngày Của Các Set Tham Số Cho User Xem Trên Console.
 Được thiết kế bởi Senior Quantitative Researcher.
+
+Chức năng:
+In trực tiếp ra màn hình Console diễn biến PnL của từng ngày (Jan 02 -> Jan 31) cho các Set tham số
+để người dùng đối chiếu sự biến động của cùng 1 Set qua cả tháng mà không cần mở file CSV.
 """
 
 import os
@@ -16,7 +20,7 @@ from v3_data_pipeline import V3DataPipeline
 from v3_preset_generator import V3PresetGenerator
 from v3_regime_classifier import V3RegimeClassifier
 
-def run_january_2020_v3_step1():
+def run_preset_matrix_jan2020():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     v3_dir = os.path.join(base_dir, "v3_system")
     os.makedirs(v3_dir, exist_ok=True)
@@ -24,146 +28,184 @@ def run_january_2020_v3_step1():
     csv_2020 = os.path.join(base_dir, "XAUUSD_2020_m1.csv")
 
     print("\n=========================================================================================================")
-    print(" 🚀 HỆ THỐNG V3: CHI TIẾT THEO DÕI TỪNG NGÀY & TỔNG HỢP THÁNG 1/2020")
+    print(" 🚀 IN TRỰC TIẾP MA TRẬN PNL 22 NGÀY CỦA CÁC SET THAM SỐ THÁNG 1/2020 LÊN CONSOLE")
     print("=========================================================================================================")
-    print(f" • File dữ liệu nạp: {os.path.basename(csv_2020)}")
-    print(f" • Số lượng Presets quét mỗi ngày: 540 Candidate Presets\n")
 
     pipeline = V3DataPipeline(base_dir)
     df_raw = pipeline.load_and_preprocess_file(csv_2020)
     feature_df, daily_m1_dict = pipeline.compute_daily_features(df_raw, target_month_str="2020-01")
 
     total_days = len(feature_df)
-    print(f" -> Đã tìm thấy {total_days} ngày giao dịch trong Tháng 1/2020.\n")
+    trading_dates = feature_df['date'].tolist()
 
     classifier = V3RegimeClassifier()
     feature_df = classifier.label_dataset_regimes(feature_df)
 
     generator = V3PresetGenerator()
-    presets_540 = V3PresetGenerator.generate_540_candidate_presets()
+    presets_list = V3PresetGenerator.generate_540_candidate_presets()
 
-    report_records = []
+    preset_matrix_results = []
 
+    for p_idx, p in enumerate(presets_list, start=1):
+        daily_pnl_dict = {}
+        daily_orders_dict = {}
+        
+        initial_balance = 10000.0
+        curr_balance = initial_balance
+        equity_curve = [curr_balance]
+        
+        win_days = 0
+        loss_days = 0
+        no_trade_days = 0
+
+        for date_str in trading_dates:
+            obs_df, exec_df = daily_m1_dict[date_str]
+            row = feature_df[feature_df['date'] == date_str].iloc[0]
+
+            atr_14 = row['atr_14_m15']
+            close_0959 = row['close_0959']
+            daily_vwap = row['daily_vwap']
+
+            res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, p)
+            day_pnl = res['net_profit']
+            num_orders = res['num_orders']
+
+            daily_pnl_dict[date_str] = day_pnl
+            daily_orders_dict[date_str] = num_orders
+
+            curr_balance += day_pnl
+            equity_curve.append(curr_balance)
+
+            if num_orders == 0:
+                no_trade_days += 1
+            elif day_pnl > 0:
+                win_days += 1
+            else:
+                loss_days += 1
+
+        traded_days = win_days + loss_days
+        win_rate = (win_days / traded_days * 100.0) if traded_days > 0 else 0.0
+        
+        gross_profit = sum(v for v in daily_pnl_dict.values() if v > 0)
+        gross_loss = abs(sum(v for v in daily_pnl_dict.values() if v < 0))
+        profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
+
+        eq_arr = np.array(equity_curve)
+        peak = np.maximum.accumulate(eq_arr)
+        dd_arr = (eq_arr - peak) / peak
+        max_dd_pct = abs(np.min(dd_arr)) * 100.0
+
+        net_return_pct = ((curr_balance - initial_balance) / initial_balance) * 100.0
+
+        rec = {
+            'preset_id': p_idx,
+            'step_0_ratio': p['step_0_ratio'],
+            'step_exp': p['step_exp'],
+            'max_orders': int(p['max_orders']),
+            'multiplier': p['multiplier'],
+            'total_pnl': curr_balance - initial_balance,
+            'net_return_pct': net_return_pct,
+            'win_rate': win_rate,
+            'profit_factor': profit_factor,
+            'max_dd_pct': max_dd_pct,
+            'win_days': win_days,
+            'loss_days': loss_days,
+            'no_trade_days': no_trade_days,
+            'daily_pnl': daily_pnl_dict
+        }
+
+        preset_matrix_results.append(rec)
+
+    # Sắp xếp các Presets theo Lợi Nhuận Ròng Tháng 1/2020 giảm dần
+    preset_matrix_results.sort(key=lambda x: x['total_pnl'], reverse=True)
+
+    # 1. BẢNG TỔNG HỢP XẾP HẠNG TOP 10 PRESETS THÁNG 1/2020
+    print("\n=========================================================================================================")
+    print(" 🏆 TOP 10 SETS THAM SỐ CÓ TỔNG LỢI NHUẬN CAO NHẤT THÁNG 1/2020")
     print("=========================================================================================================")
-    print(" 🔍 PHẦN 1: QUAN SÁT DIỄN BIẾN CHI TIẾT TỪNG NGÀY TRONG THÁNG 1/2020")
+    print(" | Hạng | Set ID | Step_0 | Exp  | MaxOrd | Mult  | PnL Tháng 1 ($) | Return (%) | Win Rate (%) | Max DD (%) | PF   | Win/Loss |")
+    print(" +------+--------+--------+------+--------+-------+-----------------+------------+--------------+------------+------+----------+")
+
+    for rank, r in enumerate(preset_matrix_results[:10], start=1):
+        print(f" | {rank:<4} | P_{r['preset_id']:<4} | {r['step_0_ratio']:<6.1f} | {r['step_exp']:<4.2f} | {r['max_orders']:<6} | {r['multiplier']:<5.1f} | {r['total_pnl']:<15,.2f} | +{r['net_return_pct']:<10.2f} | {r['win_rate']:<12.1f} | {r['max_dd_pct']:<10.2f} | {r['profit_factor']:<4.2f} | {r['win_days']}W / {r['loss_days']}L |")
     print("=========================================================================================================\n")
 
-    for idx, row in feature_df.iterrows():
-        date_str = row['date']
-        obs_df, exec_df = daily_m1_dict[date_str]
+    # 2. IN TRỰC TIẾP MA TRẬN PNL TỪNG NGÀY CHO TOP 10 PRESETS LÊN CONSOLE
+    # Chia 22 ngày thành 2 nửa (11 ngày đầu & 11 ngày sau) để hiển thị bảng vuông vức đẹp mắt trên terminal
+    dates_part1 = trading_dates[:11]
+    dates_part2 = trading_dates[11:]
 
-        atr_14 = row['atr_14_m15']
-        close_0959 = row['close_0959']
-        daily_vwap = row['daily_vwap']
-        vwap_dist_atr = row['vwap_dist_atr']
-        bb_zscore = row['bb_zscore_m15']
-        bb_slope = row['bb_slope_m15']
-        morning_momentum = row['morning_momentum']
-        regime_name = row['regime_name']
-        regime_desc = row['regime_desc']
-
-        price_1000 = exec_df['open'].iloc[0]
-        min_low_10_12 = exec_df['low'].min()
-        max_high_10_12 = exec_df['high'].max()
-
-        direction_str = "SELL" if close_0959 >= daily_vwap else "BUY"
-
-        print(f"---------------------------------------------------------------------------------------------------------")
-        print(f" 📅 NGÀY {idx+1}/{total_days}: {date_str}")
-        print(f"---------------------------------------------------------------------------------------------------------")
-        print(f" • 09:59 AM Snapshot: Open 10:00=${price_1000:,.2f} | Close 09:59=${close_0959:,.2f} | VWAP=${daily_vwap:,.2f} (Lệch: {vwap_dist_atr:+.2f}x ATR)")
-        print(f" • Chỉ số kỹ thuật : ATR(14)=${atr_14:.2f} | Z-Score={bb_zscore:.2f} | Slope={bb_slope:.2f} | Momentum={morning_momentum:.2f}")
-        print(f" • Biến động M1 10-12: Min Low = ${min_low_10_12:,.2f} | Max High = ${max_high_10_12:,.2f}")
-        print(f" • Hướng Giao Dịch  : {direction_str}")
-        print(f" 🏷️ Nhóm Xu Hướng   : {regime_name} ({regime_desc})")
-
-        # Thử nghiệm 540 Presets
-        best_score = -float('inf')
-        best_p_idx = -1
-        best_param = None
-        best_res = None
-
-        for p_idx, p in enumerate(presets_540, start=1):
-            res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, p)
-            if res['fitness_score'] > best_score:
-                best_score = res['fitness_score']
-                best_p_idx = p_idx
-                best_param = p
-                best_res = res
-
-        has_traded = (best_res is not None and best_res['num_orders'] > 0 and best_score > 0.0)
-
-        if has_traded:
-            p_info = best_param
-            print(f" 🏆 WINNER PRESET   : Set P_{best_p_idx} | Step_0={p_info['step_0_ratio']}x ATR | Exp={p_info['step_exp']} | MaxOrd={int(p_info['max_orders'])} | Mult={p_info['multiplier']}x")
-            print(f"    👉 Kết quả lệnh : Khớp {best_res['num_orders']} lệnh | Net PnL = +${best_res['net_profit']:,.2f} | Max DD = ${best_res['max_drawdown']:,.2f} | Fitness Score = {best_score:.1f}\n")
-        else:
-            print(f" 🛡️ TRẠNG THÁI     : NO-TRADE (Vàng không nảy giãn đủ Step_0 tối thiểu hoặc vi phạm quy tắc an toàn). PnL = $0.00 | Score = 0.0\n")
-
-        sys.stdout.flush()
-
-        report_records.append({
-            'date': date_str,
-            'regime_id': row['regime_id'],
-            'regime_name': regime_name,
-            'price_1000': price_1000,
-            'direction': direction_str,
-            'best_preset_id': best_p_idx if has_traded else 0,
-            'step_0_ratio': best_param['step_0_ratio'] if has_traded else np.nan,
-            'step_exp': best_param['step_exp'] if has_traded else np.nan,
-            'max_orders': best_param['max_orders'] if has_traded else np.nan,
-            'multiplier': best_param['multiplier'] if has_traded else np.nan,
-            'net_profit': best_res['net_profit'] if has_traded else 0.0,
-            'fitness_score': best_score if has_traded else 0.0
-        })
-
-    # PHẦN 2: BẢNG TỔNG HỢP CUỐI THÁNG
-    summary_df = pd.DataFrame(report_records)
-
-    print("\n=========================================================================================================")
-    print(" 📊 PHẦN 2: BẢNG TỔNG HỢP KẾT QUẢ TOÀN BỘ THÁNG 1/2020")
     print("=========================================================================================================")
-    print(" | STT | Ngày VN    | Nhóm Xu Hướng (Regime)    | Open 10:00 | Hướng | Best Set ID | Step_0 | Exp  | MaxOrd | Mult  | Net PnL ($) | Score  |")
-    print(" +-----+------------+---------------------------+------------+-------+-------------+--------+------+--------+-------+-------------+--------+")
+    print(" 📊 MA TRẬN PNL P1 (11 NGÀY ĐẦU THÁNG 1/2020: 02/01 -> 16/01)")
+    print("=========================================================================================================")
+    
+    header_p1 = " | Set ID | " + " | ".join([d[5:] for d in dates_part1]) + " |"
+    sep_p1 = " +--------+" + "+".join(["--------" for _ in dates_part1]) + "+"
+    print(header_p1)
+    print(sep_p1)
 
-    for idx, r in summary_df.iterrows():
-        if r['best_preset_id'] > 0:
-            p_str = f"P_{int(r['best_preset_id'])}"
-            s0_str = f"{r['step_0_ratio']:.1f}x"
-            exp_str = f"{r['step_exp']:.2f}"
-            mo_str = f"{int(r['max_orders'])}"
-            mult_str = f"{r['multiplier']:.1f}x"
-            pnl_str = f"+${r['net_profit']:,.2f}"
-            score_str = f"{r['fitness_score']:.1f}"
-        else:
-            p_str = "No-Trade"
-            s0_str = "-"
-            exp_str = "-"
-            mo_str = "-"
-            mult_str = "-"
-            pnl_str = "$0.00"
-            score_str = "0.0"
+    for r in preset_matrix_results[:10]:
+        row_str = f" | P_{r['preset_id']:<4} | "
+        pnl_vals = []
+        for d in dates_part1:
+            val = r['daily_pnl'][d]
+            if val > 0:
+                pnl_vals.append(f"+${val:<5.0f}")
+            elif val < 0:
+                pnl_vals.append(f"-${abs(val):<5.0f}")
+            else:
+                pnl_vals.append(f"  $0   ")
+        row_str += " | ".join(pnl_vals) + " |"
+        print(row_str)
+    print(sep_p1 + "\n")
 
-        print(f" | {idx+1:<3} | {r['date']:<10} | {r['regime_name']:<25} | {r['price_1000']:<10,.2f} | {r['direction']:<5} | {p_str:<11} | {s0_str:<6} | {exp_str:<4} | {mo_str:<6} | {mult_str:<5} | {pnl_str:<11} | {score_str:<6} |")
+    print("=========================================================================================================")
+    print(" 📊 MA TRẬN PNL P2 (11 NGÀY CUỐI THÁNG 1/2020: 17/01 -> 31/01)")
+    print("=========================================================================================================")
+    
+    header_p2 = " | Set ID | " + " | ".join([d[5:] for d in dates_part2]) + " |"
+    sep_p2 = " +--------+" + "+".join(["--------" for _ in dates_part2]) + "+"
+    print(header_p2)
+    print(sep_p2)
 
-    print(" ==========================================================================================================================================\n")
+    for r in preset_matrix_results[:10]:
+        row_str = f" | P_{r['preset_id']:<4} | "
+        pnl_vals = []
+        for d in dates_part2:
+            val = r['daily_pnl'][d]
+            if val > 0:
+                pnl_vals.append(f"+${val:<5.0f}")
+            elif val < 0:
+                pnl_vals.append(f"-${abs(val):<5.0f}")
+            else:
+                pnl_vals.append(f"  $0   ")
+        row_str += " | ".join(pnl_vals) + " |"
+        print(row_str)
+    print(sep_p2 + "\n")
 
-    regime_counts = summary_df['regime_name'].value_counts().to_dict()
-    print(" 📈 PHÂN BỔ CÁC NHÓM XU HƯỚNG THÁNG 1/2020:")
-    for r_name, count in regime_counts.items():
-        pct = (count / len(summary_df)) * 100.0
-        print(f"   • {r_name:<25}: {count} ngày ({pct:.1f}%)")
+    # 3. IN CHI TIẾT THEO NGÀY CHO SET TOP 1, TOP 2 VÀ TOP 3
+    print("=========================================================================================================")
+    print(" 🔍 SOI ĐỐI CHIẾU TIẾN TRÌNH TỪNG NGÀY CỦA TOP 3 SETS THÁNG 1/2020")
+    print("=========================================================================================================")
+    print(" | STT | Ngày VN    | Nhóm Xu Hướng (Regime)    | PnL Top 1 (P_" + str(preset_matrix_results[0]['preset_id']) + ")  | PnL Top 2 (P_" + str(preset_matrix_results[1]['preset_id']) + ")  | PnL Top 3 (P_" + str(preset_matrix_results[2]['preset_id']) + ")  |")
+    print(" +-----+------------+---------------------------+----------------+----------------+----------------+")
 
-    traded_days_count = (summary_df['best_preset_id'] > 0).sum()
-    total_jan_pnl = summary_df['net_profit'].sum()
+    for idx, date_str in enumerate(trading_dates, start=1):
+        row = feature_df[feature_df['date'] == date_str].iloc[0]
+        regime_name = row['regime_name']
 
-    print(f"\n 💰 TỔNG PNl THÁNG 1/2020: +${total_jan_pnl:,.2f} ({traded_days_count}/{len(summary_df)} ngày có lệnh thắng)")
+        v1 = preset_matrix_results[0]['daily_pnl'][date_str]
+        v2 = preset_matrix_results[1]['daily_pnl'][date_str]
+        v3 = preset_matrix_results[2]['daily_pnl'][date_str]
 
-    csv_path = os.path.join(v3_dir, "jan2020_v3_summary.csv")
-    summary_df.to_csv(csv_path, index=False)
-    print(f" 📂 Đã lưu báo cáo CSV Tháng 1/2020 tại: {csv_path}")
+        s1 = f"+${v1:,.2f}" if v1 > 0 else (f"-${abs(v1):,.2f}" if v1 < 0 else "$0.00")
+        s2 = f"+${v2:,.2f}" if v2 > 0 else (f"-${abs(v2):,.2f}" if v2 < 0 else "$0.00")
+        s3 = f"+${v3:,.2f}" if v3 > 0 else (f"-${abs(v3):,.2f}" if v3 < 0 else "$0.00")
+
+        print(f" | {idx:<3} | {date_str:<10} | {regime_name:<25} | {s1:<14} | {s2:<14} | {s3:<14} |")
+
     print("=========================================================================================================\n")
 
 
 if __name__ == '__main__':
-    run_january_2020_v3_step1()
+    run_preset_matrix_jan2020()
