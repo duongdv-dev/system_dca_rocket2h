@@ -1,7 +1,7 @@
 """
 v3_system/v3_data_pipeline.py
 ==============================
-Module Trích Xuất Dữ Liệu & Chuẩn Hóa Đặc Trưng Thị Trường (v3 Architecture).
+Module Trích Xuất Dữ Liệu & Chuẩn Hóa Đặc Trưng Thị Trường (v3 Architecture - Robust Loader).
 Được thiết kế bởi Senior Quantitative Researcher.
 """
 
@@ -16,17 +16,33 @@ class V3DataPipeline:
 
     def load_and_preprocess_file(self, csv_filepath: str) -> pd.DataFrame:
         """
-        Đọc file CSV M1 và chuẩn hóa cột datetime.
+        Đọc file CSV M1 và hỗ trợ xử lý cột 'timestamp', 'time' hoặc 'datetime'.
         """
+        if not os.path.exists(csv_filepath):
+            raise FileNotFoundError(f"Không tìm thấy file dữ liệu: {csv_filepath}")
+
         df = pd.read_csv(csv_filepath)
         df.columns = [c.lower().strip() for c in df.columns]
 
-        if 'time' in df.columns and 'datetime' not in df.columns:
-            df.rename(columns={'time': 'datetime'}, inplace=True)
+        if 'timestamp' in df.columns:
+            ts_sample = df['timestamp'].iloc[0]
+            if ts_sample > 1e11:  # Milliseconds
+                df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+            else:  # Seconds
+                df['datetime'] = pd.to_datetime(df['timestamp'], unit='s', utc=True)
+            df['datetime'] = df['datetime'].dt.tz_convert('Asia/Ho_Chi_Minh')
+        elif 'time' in df.columns:
+            df['datetime'] = pd.to_datetime(df['time'])
+            if df['datetime'].dt.tz is None:
+                df['datetime'] = df['datetime'].dt.tz_localize('Asia/Ho_Chi_Minh')
+        elif 'datetime' in df.columns:
+            df['datetime'] = pd.to_datetime(df['datetime'])
+            if df['datetime'].dt.tz is None:
+                df['datetime'] = df['datetime'].dt.tz_localize('Asia/Ho_Chi_Minh')
+        else:
+            raise ValueError(f"File CSV {csv_filepath} phải chứa cột 'timestamp', 'time' hoặc 'datetime'")
 
-        df['datetime'] = pd.to_datetime(df['datetime'])
-        df.sort_values('datetime', inplace=True)
-        df.reset_index(drop=True, inplace=True)
+        df = df.sort_values('datetime').reset_index(drop=True)
         return df
 
     def compute_daily_features(self, df_m1: pd.DataFrame, target_month_str: str = "2020-01") -> Tuple[pd.DataFrame, Dict[str, Tuple[pd.DataFrame, pd.DataFrame]]]:
@@ -39,7 +55,7 @@ class V3DataPipeline:
         df_m1['time_str'] = df_m1['datetime'].dt.strftime('%H:%M:%S')
 
         # Lọc đúng tháng yêu cầu (ví dụ: "2020-01")
-        month_mask = df_m1['datetime'].dt.strftime('%Y-%m').str.startswith(target_month_str)
+        month_mask = df_m1['date_str'].str.startswith(target_month_str)
         month_df = df_m1[month_mask].copy()
 
         unique_dates = sorted(month_df['date_str'].unique())
@@ -50,7 +66,7 @@ class V3DataPipeline:
         for date_str in unique_dates:
             day_m1 = month_df[month_df['date_str'] == date_str].copy().reset_index(drop=True)
 
-            # Lấy nến quan sát 06:00 - 09:59
+            # Lấy nến quan sát 06:00 - 09:59 và nến thực thi 10:00 - 12:00
             obs_mask = (day_m1['time_str'] >= '06:00:00') & (day_m1['time_str'] <= '09:59:59')
             exec_mask = (day_m1['time_str'] >= '10:00:00') & (day_m1['time_str'] <= '12:00:00')
 
