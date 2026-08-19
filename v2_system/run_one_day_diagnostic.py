@@ -1,12 +1,8 @@
 """
 v2_system/run_one_day_diagnostic.py
 ===================================
-Script Mô Phỏng 1 Ngày Chi Tiết Từng Phút (Single Day Diagnostic Inspector).
+Script Mô Phỏng 1 Ngày Chi Tiết Từng Phút (Single Day Diagnostic Inspector - Fixed Timestamp).
 Được thiết kế bởi Senior Quantitative Researcher.
-
-Mục đích:
-Cho phép người dùng soi từng phút nến M1, từng lệnh rải, giá khớp, PnL trạng thái và chốt lời TP
-cho DUY NHẤT 1 NGÀY BẤT KỲ để kiểm tra tính thực tế và tìm xem có lỗi ở đâu.
 """
 
 import os
@@ -34,7 +30,6 @@ def run_single_day_diagnostic(target_date: str = None):
         print("❌ Không tìm thấy dữ liệu hợp lệ!")
         return
 
-    # Nếu không chỉ định ngày, tự chọn ngày đầu tiên có nảy rải lệnh
     if target_date is None or target_date not in daily_m1_dict:
         target_date = feature_df['date'].iloc[0]
 
@@ -65,12 +60,11 @@ def run_single_day_diagnostic(target_date: str = None):
     print(f"    • Động lượng phiên sáng:         Momentum = {morning_momentum:.2f}")
     print(f"    👉 Hướng Giao Dịch Quyết Định:   {dir_str}\n")
 
-    # Đặt bộ tham số kiểm tra mẫu: Step_0 = 1.2x ATR, Step_Exp = 1.2, Max_Orders = 4, Multiplier = 1.2x
     step_0 = 1.2 * atr_14
     step_exp = 1.2
     max_orders = 4
     multiplier = 1.20
-    spread_dollars = 0.25  # Spread $0.25 (25 pips)
+    spread_dollars = 0.25
 
     if direction == 1:
         tp_price = price_1000 + spread_dollars
@@ -104,7 +98,16 @@ def run_single_day_diagnostic(target_date: str = None):
     contract_size = 100.0
 
     for m_idx, (t, row) in enumerate(exec_df.iterrows()):
-        time_str = t.strftime('%H:%M:%S')
+        # Lấy timestamp an toàn không bị lỗi 'int' object has no attribute 'strftime'
+        if 'datetime' in row:
+            time_str = pd.to_datetime(row['datetime']).strftime('%H:%M:%S')
+        elif 'time' in row:
+            time_str = pd.to_datetime(row['time']).strftime('%H:%M:%S')
+        elif isinstance(t, (pd.Timestamp, str)):
+            time_str = pd.to_datetime(t).strftime('%H:%M:%S')
+        else:
+            time_str = f"10:{m_idx:02d}:00" if m_idx < 60 else f"11:{m_idx-60:02d}:00"
+
         high_t = row['high']
         low_t = row['low']
         close_t = row['close']
@@ -128,7 +131,6 @@ def run_single_day_diagnostic(target_date: str = None):
         if len(orders_placed) > 0:
             floating_pnl = sum(o['lot'] * (close_t - o['price'] if direction == 1 else o['price'] - close_t) for o in orders_placed) * contract_size
 
-        # In log nếu có sự kiện khớp lệnh hoặc cứ mỗi 15 phút
         status_str = "Đang chạy"
         
         # Kiểm tra TP
@@ -156,6 +158,5 @@ def run_single_day_diagnostic(target_date: str = None):
 
 
 if __name__ == '__main__':
-    # Chạy mô phỏng 1 ngày mẫu
     target = sys.argv[1] if len(sys.argv) > 1 else None
     run_single_day_diagnostic(target)
