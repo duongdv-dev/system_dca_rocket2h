@@ -1,16 +1,8 @@
 """
 v3_system/run_jan2020_v3.py
 ============================
-Script Chạy Chi Tiết Từng Ngày & In Tổng Hợp Tháng 1/2020 (v3 Architecture).
+Script Chạy Chi Tiết Từng Ngày & In Tổng Hợp Tháng 1/2020 (v3 Architecture - Fixed Typo).
 Được thiết kế bởi Senior Quantitative Researcher.
-
-Quy trình V3:
-1. Nạp dữ liệu M1 Tháng 1/2020 (`XAUUSD_2020_m1.csv`).
-2. STREAM LOG TỪNG NGÀY TRỰC TIẾP (Realtime Day-by-Day Inspection):
-   - In 6 chỉ số thị trường lúc 09:59 AM.
-   - Phân loại Nhóm Xu Hướng (Range, Uptrend, Downtrend, Outlier).
-   - Chấm điểm 540 presets & trích xuất Set chiến thắng (Winner Preset).
-3. In Bảng Tổng Hợp Chi Tiết Toàn Bộ Tháng 1/2020 và Tổng PnL ($).
 """
 
 import os
@@ -70,7 +62,7 @@ def run_january_2020_v3_step1():
         regime_name = row['regime_name']
         regime_desc = row['regime_desc']
 
-        price_1000 = exec_m1['open'].iloc[0]
+        price_1000 = exec_df['open'].iloc[0]
         min_low_10_12 = exec_df['low'].min()
         max_high_10_12 = exec_df['high'].max()
 
