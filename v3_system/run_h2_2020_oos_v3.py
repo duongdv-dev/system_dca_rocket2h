@@ -4,16 +4,10 @@ v3_system/run_h2_2020_oos_v3.py
 Script Train 6 Tháng Đầu (2020-H1) -> Backtest Out-of-Sample 6 Tháng Sau (2020-H2).
 Được thiết kế bởi Senior Quantitative Researcher.
 
-Quy trình V3 Out-of-Sample Kiểm Định Thực Tế:
-1. Giai đoạn Train In-Sample (2020-01 -> 2020-06):
-   - Nạp nến M1 6 tháng đầu năm 2020 (~125 ngày).
-   - Trích xuất 6 tín hiệu R liên tục (09:59 AM) và chấm điểm 540 Presets.
-   - Trích xuất Best Preset từng ngày & Huấn luyện LightGBM Classifier.
-2. Giai đoạn Test Out-of-Sample (2020-07 -> 2020-12):
-   - Nạp nến M1 6 tháng sau năm 2020 (~125 ngày).
-   - Dùng AI LightGBM đã học từ H1 để dự đoán Preset cho từng ngày trong H2.
-   - Chạy mô phỏng thực thi trực tiếp trên nến M1 6 tháng sau.
-3. Xuất Báo Cáo Đối Chiếu In-Sample (H1) vs Out-of-Sample (H2) & Bảng Thống Kê Chi Tiết Từng Tháng H2!
+Quy trình V3 Mới (Dynamic Trigger-Based Direction):
+1. Preset CHỈ ĐỊNH NGHĨA CÁC THAM SỐ LƯỚI: [step_0_ratio, step_exp, max_orders, multiplier].
+2. Hướng BUY/SELL được quyết định linh hoạt theo giá nảy thực tế sau 10:00 (không ép cứng bởi VWAP).
+3. Train H1 (01 -> 06/2020) -> Test OOS H2 (07 -> 12/2020).
 """
 
 import os
@@ -43,7 +37,7 @@ def run_h2_2020_out_of_sample_pipeline():
     ]
 
     print("\n=========================================================================================================")
-    print(" 🚀 PIPELINE V3: TRAIN 6 THÁNG ĐẦU (2020-H1) ──► BACKTEST TEST 6 THÁNG SAU (2020-H2)")
+    print(" 🚀 PIPELINE V3: DYNAMIC DIRECTION EXECUTION (TRAIN H1 ──► BACKTEST TEST H2 OOS)")
     print("=========================================================================================================")
     print(f" • File dữ liệu:               {os.path.basename(csv_2020)}")
     print(f" • Tập Train In-Sample  (H1): {', '.join(h1_months)}")
@@ -62,8 +56,6 @@ def run_h2_2020_out_of_sample_pipeline():
 
     generator = V3PresetGenerator()
     presets_list = V3PresetGenerator.generate_540_candidate_presets()
-
-    # Lưu map từ Preset ID sang dict tham số
     preset_params_map = {i: p for i, p in enumerate(presets_list, start=1)}
 
     train_records = []
@@ -74,6 +66,7 @@ def run_h2_2020_out_of_sample_pipeline():
         atr_14 = row['atr_14_m15']
         close_0959 = row['close_0959']
         daily_vwap = row['daily_vwap']
+        bb_slope_m15 = row['bb_slope_m15']
 
         best_score = -float('inf')
         best_p_idx = -1
@@ -81,7 +74,7 @@ def run_h2_2020_out_of_sample_pipeline():
         best_res = None
 
         for p_idx, p in enumerate(presets_list, start=1):
-            res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, p)
+            res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, p, bb_slope_m15=bb_slope_m15)
             if res['fitness_score'] > best_score:
                 best_score = res['fitness_score']
                 best_p_idx = p_idx
@@ -113,7 +106,6 @@ def run_h2_2020_out_of_sample_pipeline():
     test_feature_df, test_m1_dict = pipeline.compute_daily_features(df_raw, target_months=h2_months)
     print(f" -> Tập Test Out-of-Sample 2020-H2 có: {len(test_feature_df)} ngày giao dịch.")
 
-    # Dự đoán Preset ID cho từng ngày trong H2 bằng AI đã học từ H1
     h2_predictions = trainer.predict(test_feature_df)
 
     initial_balance = 10000.0
@@ -128,10 +120,10 @@ def run_h2_2020_out_of_sample_pipeline():
         atr_14 = row['atr_14_m15']
         close_0959 = row['close_0959']
         daily_vwap = row['daily_vwap']
+        bb_slope_m15 = row['bb_slope_m15']
         price_1000 = exec_df['open'].iloc[0]
 
         if pred_p_idx <= 0 or pred_p_idx not in preset_params_map:
-            # No-Trade
             oos_trades.append({
                 'date': date_str,
                 'month': row['month'],
@@ -147,7 +139,7 @@ def run_h2_2020_out_of_sample_pipeline():
             continue
 
         pred_params = preset_params_map[pred_p_idx]
-        res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, pred_params)
+        res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, pred_params, bb_slope_m15=bb_slope_m15)
 
         day_pnl = res['net_profit']
         curr_balance += day_pnl
@@ -226,7 +218,7 @@ def run_h2_2020_out_of_sample_pipeline():
     print(f"   - Max Drawdown Lớn Nhất (H2):           ${h2_max_dd:,.2f}")
     print("=========================================================================================================\n")
 
-    # Lưu báo cáo CSV Out-of-Sample
+    # Lưu báo cáo CSV
     oos_trades_csv = os.path.join(v3_dir, "h2_2020_oos_trades.csv")
     oos_summary_csv = os.path.join(v3_dir, "h2_2020_oos_monthly_summary.csv")
 
