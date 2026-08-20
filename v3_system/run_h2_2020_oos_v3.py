@@ -174,11 +174,6 @@ def run_h2_2020_out_of_sample_pipeline():
             'num_orders': res['num_orders']
         })
 
-    oos_df = pd.DataFrame(oos_trades)it_tp'],
-            'hit_sl': res['hit_sl'],
-            'num_orders': res['num_orders']
-        })
-
     oos_df = pd.DataFrame(oos_trades)
 
     # 3. BẢNG TỔNG HỢP CHI TIẾT TỪNG THÁNG OUT-OF-SAMPLE (H2: THÁNG 7 -> THÁNG 12/2020)
