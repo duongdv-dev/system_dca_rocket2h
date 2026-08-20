@@ -1,6 +1,19 @@
 version: '3.8'
 
 services:
+  v3_h2_2020_oos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: xauusd-grid-v3:latest
+    container_name: xauusd_grid_v3_h2_2020_oos
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    command: python -u v3_system/run_h2_2020_oos_v3.py
+
   v3_h1_2020:
     build:
       context: .
