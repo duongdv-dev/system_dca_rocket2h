@@ -33,11 +33,12 @@ def run_h2_2020_out_of_sample_pipeline():
 
     feature_cols = [
         'delta_open_0600_1000_r', 'delta_vwap_r', 'range_morning_r',
-        'body_morning_r', 'morning_momentum', 'bb_zscore_m15', 'bb_slope_m15'
+        'body_morning_r', 'morning_momentum', 'bb_zscore_m15', 'bb_slope_m15',
+        'atr_ratio', 'asian_range_atr', 'wick_body_ratio_m15', 'vwap_dist_band_ratio'
     ]
 
     print("\n=========================================================================================================")
-    print(" 🚀 PIPELINE V3: DYNAMIC DIRECTION EXECUTION (TRAIN H1 ──► BACKTEST TEST H2 OOS)")
+    print(" 🚀 PIPELINE V3 NÂNG CẤP: FINANCIAL LOSS & ARCHETYPE RANKING (TRAIN H1 ──► BACKTEST H2 OOS)")
     print("=========================================================================================================")
     print(f" • File dữ liệu:               {os.path.basename(csv_2020)}")
     print(f" • Tập Train In-Sample  (H1): {', '.join(h1_months)}")
@@ -54,9 +55,9 @@ def run_h2_2020_out_of_sample_pipeline():
 
     print(f" -> Tập Train 2020-H1 có: {len(train_feature_df)} ngày giao dịch.")
 
+    from v3_preset_clusterer import V3PresetClusterer
     generator = V3PresetGenerator()
     presets_list = V3PresetGenerator.generate_540_candidate_presets()
-    preset_params_map = {i: p for i, p in enumerate(presets_list, start=1)}
 
     train_records = []
     for idx, row in train_feature_df.iterrows():
@@ -85,8 +86,11 @@ def run_h2_2020_out_of_sample_pipeline():
 
         rec = row.to_dict()
         rec['best_preset_id'] = best_p_idx if has_traded else 0
+        rec['best_archetype_id'] = V3PresetClusterer.classify_preset(best_param) if has_traded else 0
         rec['net_profit'] = best_res['net_profit'] if has_traded else 0.0
         rec['fitness_score'] = best_score if has_traded else 0.0
+        rec['hit_sl'] = best_res['hit_sl'] if has_traded else False
+        rec['dd_atr'] = best_res['dd_atr'] if has_traded else 0.0
         train_records.append(rec)
 
     train_dataset_df = pd.DataFrame(train_records)
@@ -95,7 +99,7 @@ def run_h2_2020_out_of_sample_pipeline():
 
     print(f" -> Hoàn tất chấm điểm H1: {train_win_cnt}/{len(train_dataset_df)} ngày đạt Best Preset. Tổng PnL H1 In-Sample: +${train_pnl:,.2f}")
 
-    # Train LightGBM Model
+    # Train LightGBM Model với Archetype + Financial Weights
     trainer = V3MLTrainer(feature_cols=feature_cols)
     trainer.train_lightgbm(train_dataset_df)
 
@@ -106,7 +110,12 @@ def run_h2_2020_out_of_sample_pipeline():
     test_feature_df, test_m1_dict = pipeline.compute_daily_features(df_raw, target_months=h2_months)
     print(f" -> Tập Test Out-of-Sample 2020-H2 có: {len(test_feature_df)} ngày giao dịch.")
 
-    h2_predictions = trainer.predict(test_feature_df)
+    # Gán nhãn Regime & No-Trade Guard cho tập Test
+    from v3_regime_classifier import V3RegimeClassifier
+    regime_classifier = V3RegimeClassifier()
+    test_feature_df = regime_classifier.label_dataset_regimes(test_feature_df)
+
+    h2_predictions = trainer.predict(test_feature_df, confidence_threshold=0.30)
 
     initial_balance = 10000.0
     curr_balance = initial_balance
@@ -114,7 +123,7 @@ def run_h2_2020_out_of_sample_pipeline():
 
     for idx, row in test_feature_df.iterrows():
         date_str = row['date']
-        pred_p_idx = int(h2_predictions[idx])
+        pred_archetype_id = int(h2_predictions[idx])
 
         obs_df, exec_df = test_m1_dict[date_str]
         atr_14 = row['atr_14_m15']
@@ -123,32 +132,36 @@ def run_h2_2020_out_of_sample_pipeline():
         bb_slope_m15 = row['bb_slope_m15']
         price_1000 = exec_df['open'].iloc[0]
 
-        if pred_p_idx <= 0 or pred_p_idx not in preset_params_map:
+        if pred_archetype_id <= 0:
             oos_trades.append({
                 'date': date_str,
                 'month': row['month'],
                 'price_1000': price_1000,
-                'pred_preset_id': 0,
-                'preset_name': 'No-Trade',
+                'pred_archetype_id': 0,
+                'archetype_name': 'No_Trade_Pass',
                 'net_profit': 0.0,
                 'max_drawdown': 0.0,
                 'balance': curr_balance,
                 'hit_tp': False,
+                'hit_sl': False,
                 'num_orders': 0
             })
             continue
 
-        pred_params = preset_params_map[pred_p_idx]
+        pred_params = V3PresetClusterer.get_archetype_representative(pred_archetype_id, presets_list)
         res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, pred_params, bb_slope_m15=bb_slope_m15)
 
         day_pnl = res['net_profit']
         curr_balance += day_pnl
 
+        archetype_name = V3PresetClusterer.ARCHETYPES.get(pred_archetype_id, {}).get('name', 'Unknown')
+
         oos_trades.append({
             'date': date_str,
             'month': row['month'],
             'price_1000': price_1000,
-            'pred_preset_id': pred_p_idx,
+            'pred_archetype_id': pred_archetype_id,
+            'archetype_name': archetype_name,
             'step_0_ratio': pred_params['step_0_ratio'],
             'step_exp': pred_params['step_exp'],
             'max_orders': pred_params['max_orders'],
@@ -157,6 +170,11 @@ def run_h2_2020_out_of_sample_pipeline():
             'max_drawdown': res['max_drawdown'],
             'balance': curr_balance,
             'hit_tp': res['hit_tp'],
+            'hit_sl': res['hit_sl'],
+            'num_orders': res['num_orders']
+        })
+
+    oos_df = pd.DataFrame(oos_trades)it_tp'],
             'hit_sl': res['hit_sl'],
             'num_orders': res['num_orders']
         })

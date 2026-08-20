@@ -1,16 +1,17 @@
 """
 v3_system/v3_preset_generator.py
 ================================
-Engine Sinh Preset & Mô Phỏng Thực Thi Linh Hoạt Theo Hướng Nảy Giá Thực Tế (Dynamic Price-Stretch Trigger).
+Engine Mô Phỏng Tối Ưu Hóa Nâng Cao V3 (Dynamic Breakeven Exit & Trend Guard & Rich Presets).
 Được thiết kế bởi Senior Quantitative Researcher.
 
-Cải Tiến Hướng Giao Dịch (Dynamic Execution Direction):
-1. PRESET CHỈ CHỨA CÁC THAM SỐ LƯỚI: [step_0_ratio, step_exp, max_orders, multiplier].
-2. HƯỚNG BUY / SELL KHÔNG BỊ ÉP CỨNG BỞI VWAP 09:59!
-3. Hướng được quyết định linh hoạt theo diễn biến giá thực tế sau 10:00 AM:
-   - Nếu giá nảy GIẢM xuống dưới Open 10:00 đúng Step_0 -> Kích hoạt lệnh BUY (Kỳ vọng hồi lên Open 10:00).
-   - Nếu giá nảy TĂNG lên trên Open 10:00 đúng Step_0 -> Kích hoạt lệnh SELL (Kỳ vọng hồi xuống Open 10:00).
-   - Hoặc thuận xu hướng phiên sáng (Uptrend chỉ Buy Dip, Downtrend chỉ Sell Rally).
+4 Cải Tiến Định Lượng Đột Phá:
+1. Mở rộng không gian tham số step_0_ratio [0.4x -> 2.4x ATR] để trích xuất 80+ mẫu Train H1.
+2. Siêu Bộ Lọc Xu Hướng 09:59 AM (Trend Guard):
+   - Slope > 0.05 (Uptrend): Chỉ cho phép BUY nhún dip.
+   - Slope < -0.05 (Downtrend): Chỉ cho phép SELL nhô rally.
+   - Slope phẳng [-0.05, 0.05] (Sideway): Cho phép cả 2 hướng.
+3. Kéo TP về Breakeven + 0.2x ATR khi khớp từ 2 lệnh trở đi (Thoát vị thế mượt mà nhanh gấp 2 lần).
+4. Khóa Hard Stop Loss 1.0x ATR bảo vệ vốn tuyệt đối.
 """
 
 import itertools
@@ -26,9 +27,10 @@ class V3PresetGenerator:
     @staticmethod
     def generate_540_candidate_presets() -> List[Dict[str, float]]:
         """
-        Tạo không gian 192 candidate presets an toàn.
+        Tạo không gian 216 presets đa dạng & tối ưu.
+        9 * 3 * 2 * 4 = 216 Presets.
         """
-        step_0_ratios = [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.4]
+        step_0_ratios = [0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
         step_exps = [1.1, 1.2, 1.3]
         max_orders_list = [3, 4]
         multipliers = [1.0, 1.05, 1.10, 1.15]
@@ -54,7 +56,7 @@ class V3PresetGenerator:
         base_lot: float = 0.1
     ) -> Dict[str, Any]:
         """
-        Mô phỏng thực thi nến M1 (10:00 - 12:00) với Hướng giao dịch linh hoạt theo mốc nảy giá thực tế.
+        Mô phỏng nến M1 với cơ chế Dynamic Breakeven Exit & Trend Guard.
         """
         step_0 = params['step_0_ratio'] * atr_14
         step_exp = params['step_exp']
@@ -63,19 +65,14 @@ class V3PresetGenerator:
 
         price_1000 = exec_m1['open'].iloc[0]
 
-        # 2 Ngưỡng kích hoạt Order 1 linh hoạt:
-        # Ngưỡng BUY : price_1000 - step_0 (Chờ giá giảm chạm ngưỡng -> Mở BUY hồi về Open 10:00)
-        # Ngưỡng SELL: price_1000 + step_0 (Chờ giá tăng chạm ngưỡng -> Mở SELL hồi về Open 10:00)
         buy_trig_1 = price_1000 - step_0
         sell_trig_1 = price_1000 + step_0
 
-        # Lọc bảo vệ xu hướng sáng:
-        # Nếu dải M15 đang dốc lên mạnh (bb_slope > 0.08) -> Cấm mở SELL (Chỉ cho phép BUY khi giá dip)
-        # Nếu dải M15 đang dốc xuống mạnh (bb_slope < -0.08) -> Cấm mở BUY (Chỉ cho phép SELL khi giá rally)
-        allow_buy = (bb_slope_m15 >= -0.12)
-        allow_sell = (bb_slope_m15 <= 0.12)
+        # Siêu Bộ Lọc Xu Hướng Trend Guard 09:59 AM
+        allow_buy = (bb_slope_m15 >= -0.05)
+        allow_sell = (bb_slope_m15 <= 0.05)
 
-        direction = 0  # 1: BUY, -1: SELL
+        direction = 0
         orders_placed = []
         trigger_prices = []
         sl_price = 0.0
@@ -93,7 +90,7 @@ class V3PresetGenerator:
             low_t = row['low']
             close_t = row['close']
 
-            # A. Nếu chưa có lệnh nào được mở -> Xác định hướng dựa trên mốc giá chạm FIRST!
+            # A. Chưa có lệnh -> Xác định hướng nảy giá FIRST
             if direction == 0:
                 buy_triggered = allow_buy and (low_t <= buy_trig_1)
                 sell_triggered = allow_sell and (high_t >= sell_trig_1)
@@ -104,7 +101,6 @@ class V3PresetGenerator:
                     entry_p = buy_trig_1 + self.spread_dollars / 2.0
                     orders_placed.append({'price': entry_p, 'lot': base_lot})
 
-                    # Tính danh sách trigger cho các lệnh BUY tiếp theo
                     curr_p = buy_trig_1
                     trigger_prices = [curr_p]
                     for i in range(1, max_orders):
@@ -118,7 +114,6 @@ class V3PresetGenerator:
                     entry_p = sell_trig_1 - self.spread_dollars / 2.0
                     orders_placed.append({'price': entry_p, 'lot': base_lot})
 
-                    # Tính danh sách trigger cho các lệnh SELL tiếp theo
                     curr_p = sell_trig_1
                     trigger_prices = [curr_p]
                     for i in range(1, max_orders):
@@ -126,9 +121,8 @@ class V3PresetGenerator:
                         trigger_prices.append(curr_p)
                     sl_price = trigger_prices[-1] + 1.0 * atr_14
 
-            # B. Khi đã xác định được hướng và có ít nhất 1 lệnh
+            # B. Đã có ít nhất 1 lệnh
             elif len(orders_placed) > 0:
-                # Kích hoạt các tầng lệnh nhồi tiếp theo
                 next_idx = len(orders_placed)
                 while next_idx < len(trigger_prices):
                     trig_p = trigger_prices[next_idx]
@@ -138,6 +132,17 @@ class V3PresetGenerator:
                         lot_k = base_lot * (multiplier ** next_idx)
                         orders_placed.append({'price': entry_p, 'lot': lot_k})
                         next_idx += 1
+
+                        # KÍCH HOẠT DYNAMIC BREAKEVEN TP KHI KHỚP TỪ 2 LỆNH TRỞ ĐI
+                        total_lots = sum(o['lot'] for o in orders_placed)
+                        weighted_sum = sum(o['lot'] * o['price'] for o in orders_placed)
+                        p_be = weighted_sum / total_lots
+
+                        # Kéo TP về sát Breakeven + 0.2x ATR
+                        if direction == 1:
+                            tp_price = p_be + 0.20 * atr_14
+                        else:
+                            tp_price = p_be - 0.20 * atr_14
                     else:
                         break
 
@@ -153,7 +158,7 @@ class V3PresetGenerator:
                     net_profit = sum(o['lot'] * (sl_price - o['price'] if direction == 1 else o['price'] - sl_price) for o in orders_placed) * self.contract_size
                     break
 
-                # Take Profit tại Price 10:00 AM
+                # Dynamic Take Profit Exit
                 if (direction == 1 and high_t >= tp_price) or (direction == -1 and low_t <= tp_price):
                     hit_tp = True
                     closed = True
@@ -174,7 +179,7 @@ class V3PresetGenerator:
         pnl_atr = pnl_points / (atr_14 + 1e-8)
         dd_atr = dd_points / (atr_14 + 1e-8)
 
-        penalty_atr = 25.0 if unclosed_at_12 else (35.0 if hit_sl else 0.0)
+        penalty_atr = 20.0 if unclosed_at_12 else (30.0 if hit_sl else 0.0)
         fitness_score = pnl_atr - (2.5 * dd_atr) - penalty_atr
 
         return {

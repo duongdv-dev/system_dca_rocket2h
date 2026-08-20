@@ -124,6 +124,31 @@ class V3DataPipeline:
             else:
                 bb_slope = 0.0
 
+            # --- NÂNG CẤP DÒNG ĐẶC TRƯNG QUANT NÂNG CAO ---
+            # 1. Volatile Ratio
+            atr_long_term = float(tr.mean()) if len(tr) > 0 else atr_14_m15
+            atr_ratio = float(atr_14_m15 / max(0.5, atr_long_term))
+
+            # 2. Asian Session Range (06:00 - 09:00 VN)
+            asia_mask = (obs_m1['time_str'] >= '06:00:00') & (obs_m1['time_str'] <= '09:00:00')
+            asia_m1 = obs_m1[asia_mask]
+            if len(asia_m1) > 0:
+                asian_range_atr = float((asia_m1['high'].max() - asia_m1['low'].min()) / atr_14_m15)
+            else:
+                asian_range_atr = range_morning_r
+
+            # 3. Wick-to-body ratio nến M15 cuối phiên sáng (09:45 - 09:59)
+            last_m15_high = m15_df['high'].iloc[-1]
+            last_m15_low = m15_df['low'].iloc[-1]
+            last_m15_open = m15_df['open'].iloc[-1]
+            last_m15_close = m15_df['close'].iloc[-1]
+            body_size = abs(last_m15_close - last_m15_open)
+            wick_size = (last_m15_high - last_m15_low) - body_size
+            wick_body_ratio_m15 = float(wick_size / (body_size + 1e-5))
+
+            # 4. VWAP Band Ratio
+            vwap_dist_band_ratio = float(abs(close_0959 - daily_vwap) / atr_14_m15)
+
             daily_records.append({
                 'date': date_str,
                 'month': date_str[:7],
@@ -138,7 +163,11 @@ class V3DataPipeline:
                 'body_morning_r': body_morning_r,
                 'morning_momentum': morning_momentum,
                 'bb_zscore_m15': bb_zscore,
-                'bb_slope_m15': bb_slope
+                'bb_slope_m15': bb_slope,
+                'atr_ratio': atr_ratio,
+                'asian_range_atr': asian_range_atr,
+                'wick_body_ratio_m15': wick_body_ratio_m15,
+                'vwap_dist_band_ratio': vwap_dist_band_ratio
             })
 
             daily_m1_dict[date_str] = (obs_m1, exec_m1)

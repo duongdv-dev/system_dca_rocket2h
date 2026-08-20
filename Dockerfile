@@ -20,5 +20,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy toàn bộ mã nguồn dự án vào container
 COPY . .
 
-# Chạy main pipeline v2 với unbuffered output để hiển thị realtime log
-CMD ["python", "-u", "v2_system/main_pipeline.py"]
+# Chạy v3 system OOS pipeline mới với unbuffered output để hiển thị realtime log
+CMD ["python", "-u", "v3_system/run_h2_2020_oos_v3.py"]
