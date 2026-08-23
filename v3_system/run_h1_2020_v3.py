@@ -49,8 +49,10 @@ def run_h1_2020_v3_evaluation():
     daily_winners = []
 
     print("=========================================================================================================")
-    print(" 🔍 TRÍCH XUẤT SET TỐI ƯU TỪNG NGÀY TRONG 6 THÁNG ĐẦU 2020 (2020-01 -> 2020-06)")
+    print(" 🔍 BẢNG ĐỐI CHIẾU THAM SỐ DYNAMIC STEP & MARTINGALE TỪNG NGÀY 6 THÁNG H1 2020")
     print("=========================================================================================================")
+    print(" | STT | Ngày VN    | Hướng | Best Set ID | Dynamic Step_0 | Step Exp | Max Orders | Multiplier | Net Profit ($) | Score (R) |")
+    print(" +-----+------------+-------+-------------+----------------+----------+------------+------------+----------------+-----------+")
 
     for idx, date_str in enumerate(trading_dates, start=1):
         row = feature_df[feature_df['date'] == date_str].iloc[0]
@@ -64,6 +66,7 @@ def run_h1_2020_v3_evaluation():
         delta_open_r = row['delta_open_0600_1000_r']
         delta_vwap_r = row['delta_vwap_r']
         range_morning_r = row['range_morning_r']
+        bb_slope_m15 = row['bb_slope_m15']
 
         direction_str = "SELL" if close_0959 >= daily_vwap else "BUY"
 
@@ -74,7 +77,7 @@ def run_h1_2020_v3_evaluation():
 
         # So sánh 540 Presets trên nến M1 ngày hôm nay
         for p_idx, p in enumerate(presets_list, start=1):
-            res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, p)
+            res = generator.simulate_day(exec_df, atr_14, close_0959, daily_vwap, p, bb_slope_m15=bb_slope_m15)
             if res['fitness_score'] > best_score:
                 best_score = res['fitness_score']
                 best_p_idx = p_idx
@@ -82,6 +85,26 @@ def run_h1_2020_v3_evaluation():
                 best_res = res
 
         has_traded = (best_res is not None and best_res['num_orders'] > 0 and best_score > 0.0)
+
+        if has_traded:
+            p_str = f"Set_{best_p_idx}"
+            s0_val = best_param['step_0_ratio'] * atr_14
+            s0_str = f"{s0_val:.1f}$ ({best_param['step_0_ratio']:.1f}x)"
+            exp_str = f"{best_param['step_exp']:.2f}"
+            mo_str = f"{int(best_param['max_orders'])}"
+            mult_str = f"{best_param['multiplier']:.2f}x"
+            pnl_str = f"+${best_res['net_profit']:,.2f}"
+            score_str = f"{best_score:.1f}"
+        else:
+            p_str = "No-Trade"
+            s0_str = "-"
+            exp_str = "-"
+            mo_str = "-"
+            mult_str = "-"
+            pnl_str = "$0.00"
+            score_str = "0.0"
+
+        print(f" | {idx:<3} | {date_str:<10} | {direction_str:<5} | {p_str:<11} | {s0_str:<14} | {exp_str:<8} | {mo_str:<10} | {mult_str:<10} | {pnl_str:<14} | {score_str:<9} |")
 
         daily_winners.append({
             'date': date_str,
