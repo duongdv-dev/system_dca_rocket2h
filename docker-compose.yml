@@ -1,65 +1,35 @@
+x-base-service: &base-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: xauusd-grid-v3:latest
+  volumes:
+    - .:/app
+  environment:
+    - PYTHONUNBUFFERED=1
+    - PYTHONDONTWRITEBYTECODE=1
+
 services:
-  v3_advanced_training:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: xauusd-grid-v3:latest
-    container_name: xauusd_grid_v3_advanced_training
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
+  # Service chính: Pipeline Walk-Forward 2020-2025 nâng cấp
+  app:
+    <<: *base-service
+    container_name: xauusd_grid_v3_main
     command: python -u v3_system/run_v3_advanced_training_pipeline.py
 
+  # Service V4 Mới: Chiến Lược 1 Lệnh Duy Nhất (Non-DCA Asian ORB Breakout 2020-2025)
+  v4_single_trade:
+    <<: *base-service
+    container_name: xauusd_single_trade_v4
+    command: python -u v4_system/run_v4_backtest_2020_2025.py
+
+  # Service phụ: Backtest 6 tháng cuối 2020 OOS
   v3_h2_2020_oos:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: xauusd-grid-v3:latest
+    <<: *base-service
     container_name: xauusd_grid_v3_h2_2020_oos
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
     command: python -u v3_system/run_h2_2020_oos_v3.py
 
-  v3_h1_2020:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: xauusd-grid-v3:latest
-    container_name: xauusd_grid_v3_h1_2020
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
-    command: python -u v3_system/run_h1_2020_v3.py
-
-  v3_jan2020:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: xauusd-grid-v3:latest
-    container_name: xauusd_grid_v3_jan2020
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
-    command: python -u v3_system/run_jan2020_v3.py
-
+  # Service phụ: Backtest v2 legacy
   v2_pipeline:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: xauusd-grid-v2:latest
-    container_name: xauusd_grid_v2_container
-    volumes:
-      - .:/app
-    environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
+    <<: *base-service
+    container_name: xauusd_grid_v2_pipeline
     command: python -u v2_system/main_pipeline.py
