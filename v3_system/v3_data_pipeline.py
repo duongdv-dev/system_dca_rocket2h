@@ -149,6 +149,36 @@ class V3DataPipeline:
             # 4. VWAP Band Ratio
             vwap_dist_band_ratio = float(abs(close_0959 - daily_vwap) / atr_14_m15)
 
+            # --- NÂNG CẤP VI CẤU TRÚC SÁT GIỜ VÀO LỆNH (09:45 - 09:59 VN) ---
+            # 5. Momentum 5 phút trước 10:00 AM (09:55 - 09:59)
+            last_5m_mask = (obs_m1['time_str'] >= '09:55:00') & (obs_m1['time_str'] <= '09:59:59')
+            last_5m_df = obs_m1[last_5m_mask]
+            if len(last_5m_df) > 0:
+                pre_open_momentum_5m = float((last_5m_df['close'].iloc[-1] - last_5m_df['open'].iloc[0]) / atr_14_m15)
+            else:
+                pre_open_momentum_5m = 0.0
+
+            # 6. Khoảng cách Breakout đỉnh/đáy phiên Á theo ATR
+            if len(asia_m1) > 0:
+                asia_high = asia_m1['high'].max()
+                asia_low = asia_m1['low'].min()
+                dist_high_r = (close_0959 - asia_high) / atr_14_m15
+                dist_low_r = (close_0959 - asia_low) / atr_14_m15
+                asian_breakout_distance_r = float(dist_high_r if abs(dist_high_r) < abs(dist_low_r) else dist_low_r)
+            else:
+                asian_breakout_distance_r = 0.0
+
+            # 7. Order Flow Imbalance Proxy (Tỷ lệ volume xanh vs đỏ trong 15 phút cuối: 09:45 - 09:59)
+            last_15m_mask = (obs_m1['time_str'] >= '09:45:00') & (obs_m1['time_str'] <= '09:59:59')
+            last_15m_df = obs_m1[last_15m_mask]
+            if len(last_15m_df) > 0:
+                bull_vol = last_15m_df[last_15m_df['close'] >= last_15m_df['open']]['volume'].sum()
+                bear_vol = last_15m_df[last_15m_df['close'] < last_15m_df['open']]['volume'].sum()
+                total_15m_vol = bull_vol + bear_vol
+                order_flow_imbalance_proxy = float((bull_vol - bear_vol) / (total_15m_vol + 1e-8))
+            else:
+                order_flow_imbalance_proxy = 0.0
+
             daily_records.append({
                 'date': date_str,
                 'month': date_str[:7],
@@ -167,7 +197,10 @@ class V3DataPipeline:
                 'atr_ratio': atr_ratio,
                 'asian_range_atr': asian_range_atr,
                 'wick_body_ratio_m15': wick_body_ratio_m15,
-                'vwap_dist_band_ratio': vwap_dist_band_ratio
+                'vwap_dist_band_ratio': vwap_dist_band_ratio,
+                'pre_open_momentum_5m': pre_open_momentum_5m,
+                'asian_breakout_distance_r': asian_breakout_distance_r,
+                'order_flow_imbalance_proxy': order_flow_imbalance_proxy
             })
 
             daily_m1_dict[date_str] = (obs_m1, exec_m1)
