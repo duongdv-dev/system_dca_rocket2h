@@ -20,5 +20,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy toàn bộ mã nguồn dự án vào container
 COPY . .
 
-# Chạy v3 system OOS pipeline mới với unbuffered output để hiển thị realtime log
-CMD ["python", "-u", "v3_system/run_h2_2020_oos_v3.py"]
+# Chạy v3 advanced training pipeline mới với unbuffered output để hiển thị realtime log
+CMD ["python", "-u", "v3_system/run_v3_advanced_training_pipeline.py"]

@@ -1,6 +1,17 @@
-version: '3.8'
-
 services:
+  v3_advanced_training:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: xauusd-grid-v3:latest
+    container_name: xauusd_grid_v3_advanced_training
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    command: python -u v3_system/run_v3_advanced_training_pipeline.py
+
   v3_h2_2020_oos:
     build:
       context: .
