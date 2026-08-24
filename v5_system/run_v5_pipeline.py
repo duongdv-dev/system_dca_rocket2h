@@ -1,8 +1,9 @@
 """
-Master Orchestrator Script for v5 Intraday Anchor Mean Reversion System
-----------------------------------------------------------------------
-Executes Stage 1 (Data Preprocessing), Stage 2 (Quantitative EDA & Feature Extraction),
-and Stage 3 (LightGBM ML Gatekeeper & ONNX Export) end-to-end.
+Master Orchestrator Script for v5 Intraday Anchor Mean Reversion System (Phiên bản Tiếng Việt)
+-----------------------------------------------------------------------------------------
+Thực thi Giai đoạn 1 (Tiền xử lý dữ liệu & Đồng bộ múi giờ UTC+7), 
+Giai đoạn 2 (Trích xuất đặc trưng hành vi & Báo cáo EDA định lượng), 
+và Giai đoạn 3 (Huấn luyện LightGBM Gatekeeper & Xuất mô hình ONNX cho MT5 EA).
 """
 
 import os
@@ -12,7 +13,7 @@ import argparse
 import joblib
 import pandas as pd
 
-# Add root directory to sys.path
+# Thêm thư mục gốc vào sys.path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
@@ -38,58 +39,58 @@ def run_pipeline(
     output_csv_path: str = os.path.join(BASE_DIR, "v5_daily_features.csv"),
 ) -> None:
     """
-    Runs the complete 3-stage quantitative research and ML pipeline.
+    Chạy toàn bộ pipeline nghiên cứu định lượng và học máy 3 giai đoạn end-to-end.
     """
-    print("\n" + "#" * 70)
-    print("      INTRADAY ANCHOR MEAN REVERSION PIPELINE (v5_system)      ")
-    print("          XAUUSD 10:00 - 12:00 VN Time (UTC+7 / Asia/Ho_Chi_Minh)   ")
-    print("#" * 70 + "\n")
+    print("\n" + "#" * 75)
+    print("      HỆ THỐNG GIAO DỊCH ĐỊNH LƯỢNG INTRADAY ANCHOR MEAN REVERSION (v5_system)      ")
+    print("          XAUUSD 10:00 - 12:00 Giờ Việt Nam (UTC+7 / Asia/Ho_Chi_Minh)            ")
+    print("#" * 75 + "\n")
 
     # =========================================================================
-    # STAGE 1: Data Preprocessing & Timezone Alignment
+    # GIAI ĐOẠN 1: Tiền xử lý dữ liệu & Chuẩn hóa múi giờ Việt Nam (UTC+7)
     # =========================================================================
-    logger.info("=== STAGE 1: Data Preprocessing & Timezone Alignment ===")
+    logger.info("=== GIAI ĐOẠN 1: Tiền xử lý dữ liệu & Đồng bộ Múi giờ UTC+7 ===")
     loader = M1DataLoader(target_tz="Asia/Ho_Chi_Minh")
     
     try:
         m1_df = loader.load_directory(directory_path=data_dir, pattern=file_pattern)
     except Exception as err:
-        logger.error(f"Stage 1 failed to load data: {err}")
+        logger.error(f"Giai đoạn 1 thất bại khi tải dữ liệu: {err}")
         return
 
     # =========================================================================
-    # STAGE 2: Quantitative EDA & Behavioral Feature Engineering
+    # GIAI ĐOẠN 2: Phân tích EDA định lượng & Trích xuất Đặc trưng Hành vi
     # =========================================================================
-    logger.info("=== STAGE 2: Behavioral Feature Engineering & Quantitative EDA ===")
+    logger.info("=== GIAI ĐOẠN 2: Trích xuất Đặc trưng Hành vi trước 10:00 & Báo cáo EDA ===")
     extractor = IntradayFeatureExtractor(min_dev_usd=min_dev_usd)
     daily_df = extractor.process_dataset(m1_df)
 
     if len(daily_df) == 0:
-        logger.error("No valid trading day records extracted. Aborting.")
+        logger.error("Không trích xuất được ngày giao dịch hợp lệ nào. Dừng thực thi.")
         return
 
-    # Export daily features to CSV for transparency
+    # Xuất dataset đặc trưng hàng ngày ra CSV để kiểm tra
     daily_df.to_csv(output_csv_path, index=False)
-    logger.info(f"Saved processed daily features dataset to: {output_csv_path}")
+    logger.info(f"Đã lưu dataset đặc trưng hàng ngày đã xử lý vào file: {output_csv_path}")
 
-    # Generate EDA Report
+    # Xuất Báo cáo Thống kê EDA
     eda_report = EDAReporter.generate_eda_report(daily_df)
 
     # =========================================================================
-    # STAGE 3: Machine Learning Gatekeeper Model (LightGBM) & ONNX Export
+    # GIAI ĐOẠN 3: Mô hình Học máy LightGBM Gatekeeper & Xuất mô hình ONNX
     # =========================================================================
-    logger.info("=== STAGE 3: LightGBM ML Gatekeeper Training & Purged Walk-Forward CV ===")
+    logger.info("=== GIAI ĐOẠN 3: Huấn luyện LightGBM Gatekeeper & Purged Walk-Forward CV ===")
     gatekeeper = LightGBMGatekeeper()
     
     try:
         cv_results = gatekeeper.train_and_evaluate_cv(daily_df, n_splits=5)
         gatekeeper.print_ml_report(cv_results)
 
-        # Save PKL model artifact
+        # Lưu file mô hình binary pkl
         joblib.dump(gatekeeper.model, output_pkl_path)
-        logger.info(f"Saved LightGBM model binary to: {output_pkl_path}")
+        logger.info(f"Đã lưu binary mô hình LightGBM tại: {output_pkl_path}")
 
-        # Export to ONNX for MT5 EA deployment
+        # Xuất file ONNX cho Robot EA MT5
         ONNXExporter.export_to_onnx(
             model=gatekeeper.model,
             feature_cols=gatekeeper.FEATURE_COLS,
@@ -97,17 +98,17 @@ def run_pipeline(
         )
 
     except Exception as err:
-        logger.error(f"Stage 3 ML Gatekeeper training encountered an error: {err}", exc_info=True)
+        logger.error(f"Giai đoạn 3 huấn luyện mô hình Gatekeeper gặp lỗi: {err}", exc_info=True)
 
-    print("\n" + "=" * 70)
-    print("PIPELINE EXECUTION COMPLETE (v5_system)")
-    print("=" * 70 + "\n")
+    print("\n" + "=" * 75)
+    print("HOÀN THÀNH TOÀN BỘ PIPELINE (v5_system)")
+    print("=" * 75 + "\n")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run v5 Intraday Anchor Mean Reversion Pipeline")
-    parser.add_argument("--data-dir", type=str, default=BASE_DIR, help="Directory containing M1 CSV files")
-    parser.add_argument("--min-dev", type=float, default=1.0, help="Minimum USD deviation trigger for reversion target")
+    parser = argparse.ArgumentParser(description="Chạy Pipeline Intraday Anchor Mean Reversion v5")
+    parser.add_argument("--data-dir", type=str, default=BASE_DIR, help="Thư mục chứa các file M1 CSV")
+    parser.add_argument("--min-dev", type=float, default=1.0, help="Mức lệch giá USD tối thiểu để tính nhãn đảo chiều")
     args = parser.parse_args()
 
     run_pipeline(

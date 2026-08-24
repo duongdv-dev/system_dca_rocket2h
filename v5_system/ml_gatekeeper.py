@@ -1,9 +1,9 @@
 """
-Machine Learning Gatekeeper Model Module (Stage 3)
---------------------------------------------------
-Trains a LightGBM Classifier using Purged Walk-Forward TimeSeries Cross-Validation,
-optimizes for Precision / PR-AUC to filter out breakout trend days, outputs feature importances,
-recommends optimal probability thresholds for MT5 EA trade filtering, and exports to ONNX.
+Machine Learning Gatekeeper Model Module (Giai đoạn 3)
+------------------------------------------------------
+Huấn luyện mô hình LightGBM Classifier sử dụng Purged Walk-Forward TimeSeries Cross-Validation,
+tối ưu hóa theo Precision / PR-AUC để lọc các ngày phá ngưỡng (breakout), xuất thứ tự tầm quan trọng của đặc trưng,
+đề xuất ngưỡng xác suất tối ưu để lọc lệnh trên EA MT5, và xuất mô hình sang định dạng ONNX.
 """
 
 import os
@@ -24,28 +24,28 @@ logger = logging.getLogger(__name__)
 
 class PurgedWalkForwardCV:
     """
-    Purged Group TimeSeries Walk-Forward Cross-Validator.
-    Ensures strict temporal ordering with an embargo/purge window to prevent data leakage.
+    Phân chia Validation theo chuỗi thời gian Purged Walk-Forward.
+    Đảm bảo tính thứ tự thời gian nghiêm ngặt với vùng đệm (embargo/purge) để tránh rò rỉ dữ liệu (data leakage).
     """
 
     def __init__(self, n_splits: int = 5, purge_days: int = 2):
         """
         Args:
-            n_splits: Number of walk-forward folds.
-            purge_days: Number of trading days to purge between train and test sets.
+            n_splits: Số lượng fold kiểm thử cuốn chiếu (walk-forward).
+            purge_days: Số ngày giao dịch loại bỏ (purge) giữa tập train và test.
         """
         self.n_splits = n_splits
         self.purge_days = purge_days
 
     def split(self, X: pd.DataFrame) -> List[Tuple[np.ndarray, np.ndarray]]:
         """
-        Generates indices for training and test sets.
+        Tạo chỉ mục index cho tập train và test.
 
         Args:
-            X: Input features DataFrame sorted chronologically.
+            X: DataFrame đặc trưng đầu vào sắp xếp theo thứ tự thời gian.
 
         Returns:
-            List of (train_indices, test_indices) tuples.
+            Danh sách các tuple (train_indices, test_indices).
         """
         n_samples = len(X)
         fold_size = n_samples // (self.n_splits + 1)
@@ -67,7 +67,7 @@ class PurgedWalkForwardCV:
 
 
 class LightGBMGatekeeper:
-    """LightGBM Binary Classifier for filtering high-risk breakout days."""
+    """Mô hình phân loại LightGBM Gatekeeper để lọc các ngày nguy cơ xu hướng mạnh."""
 
     FEATURE_COLS = [
         "asian_range", "asian_return", "asian_volume",
@@ -79,7 +79,7 @@ class LightGBMGatekeeper:
 
     def __init__(self, params: Optional[Dict[str, Any]] = None):
         """
-        Default LightGBM hyperparameters tuned for Precision & PR-AUC.
+        Siêu tham số LightGBM mặc định được tinh chỉnh ưu tiên Precision & PR-AUC.
         """
         default_params = {
             "objective": "binary",
@@ -105,18 +105,18 @@ class LightGBMGatekeeper:
 
     def train_and_evaluate_cv(self, daily_df: pd.DataFrame, n_splits: int = 5) -> Dict[str, Any]:
         """
-        Runs Purged Walk-Forward Cross-Validation on daily dataset.
+        Chạy Purged Walk-Forward Cross-Validation trên dataset hàng ngày.
 
         Args:
-            daily_df: Daily DataFrame containing features and `reverted` target.
-            n_splits: Number of walk-forward folds.
+            daily_df: DataFrame hàng ngày chứa đặc trưng và mục tiêu `reverted`.
+            n_splits: Số lượng fold walk-forward.
 
         Returns:
-            Dictionary containing cross-validation metrics and feature importances.
+            Dictionary chứa các chỉ số CV và mức độ quan trọng của đặc trưng.
         """
-        logger.info("Executing Purged Walk-Forward Cross-Validation (Stage 3)...")
+        logger.info("Đang thực thi kiểm thử Purged Walk-Forward Cross-Validation (Giai đoạn 3)...")
 
-        # Ensure temporal sorting
+        # Đảm bảo sắp xếp theo thời gian
         daily_df = daily_df.sort_values("date").reset_index(drop=True)
 
         X = daily_df[self.FEATURE_COLS]
@@ -145,7 +145,7 @@ class LightGBMGatekeeper:
             oof_preds[test_idx] = test_probs
             feature_importances += clf.feature_importances_ / len(folds)
 
-            # Compute fold metrics at default 0.5 threshold
+            # Tính toán chỉ số fold ở ngưỡng mặc định 0.5
             test_preds = (test_probs >= 0.5).astype(int)
             prec = precision_score(y_test, test_preds, zero_division=0)
             rec = recall_score(y_test, test_preds, zero_division=0)
@@ -165,19 +165,19 @@ class LightGBMGatekeeper:
                 "roc_auc": roc_auc,
                 "pr_auc": pr_auc
             })
-            logger.info(f"Fold {fold}/{len(folds)} - Precision: {prec:.4f}, Recall: {rec:.4f}, ROC-AUC: {roc_auc:.4f}, PR-AUC: {pr_auc:.4f}")
+            logger.info(f" Fold {fold}/{len(folds)} - Độ chính xác (Precision): {prec*100:.2f}%, Độ bao phủ (Recall): {rec*100:.2f}%, ROC-AUC: {roc_auc:.4f}, PR-AUC: {pr_auc:.4f}")
 
-        # Train final model on entire dataset for production deployment
+        # Huấn luyện mô hình cuối cùng trên toàn bộ dataset để triển khai thực tế
         self.model = lgb.LGBMClassifier(**self.params)
         self.model.fit(X, y)
 
-        # Feature Importance DataFrame
+        # Bảng Tầm quan trọng của Đặc trưng
         fi_df = pd.DataFrame({
             "feature": self.FEATURE_COLS,
             "importance": self.model.feature_importances_
         }).sort_values("importance", ascending=False).reset_index(drop=True)
 
-        # Evaluate OOF predictions across probability thresholds
+        # Đánh giá dự đoán OOF theo các ngưỡng xác suất khác nhau
         oof_mask = ~np.isnan(oof_preds)
         oof_y = y[oof_mask]
         oof_p = oof_preds[oof_mask]
@@ -197,14 +197,14 @@ class LightGBMGatekeeper:
 
     def _evaluate_thresholds(self, y_true: np.ndarray, y_probs: np.ndarray) -> pd.DataFrame:
         """
-        Evaluates Precision, Recall, and Trade Frequency across different probability thresholds.
+        Đánh giá Precision, Recall và Tần suất giao dịch qua các ngưỡng xác suất.
 
         Args:
-            y_true: True binary targets.
-            y_probs: Predicted probabilities.
+            y_true: Nhãn thực tế.
+            y_probs: Xác suất dự đoán đảo chiều.
 
         Returns:
-            DataFrame of threshold metrics.
+            DataFrame phân tích theo ngưỡng.
         """
         thresholds = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85]
         results = []
@@ -224,39 +224,39 @@ class LightGBMGatekeeper:
                 win_rate_boost = 0.0
 
             results.append({
-                "threshold": th,
-                "precision_winrate_pct": prec,
-                "recall_pct": rec,
-                "trades_filtered_pct": (1.0 - n_trades / len(y_true)) * 100.0 if len(y_true) > 0 else 0.0,
-                "n_passed_trades": n_trades,
-                "winrate_boost_vs_baseline": win_rate_boost
+                "Ngưỡng_P(Revert)": th,
+                "Tỷ_lệ_Thắng_WinRate(%)": round(prec, 2),
+                "Tỷ_lệ_Bao_Phủ_Recall(%)": round(rec, 2),
+                "Số_Lệnh_Được_Duyệt": int(n_trades),
+                "Số_Lệnh_Bị_Lọc(%)": round((1.0 - n_trades / len(y_true)) * 100.0, 1) if len(y_true) > 0 else 0.0,
+                "Mức_Tăng_WinRate_So_Gốc(%)": round(win_rate_boost, 2)
             })
 
         return pd.DataFrame(results)
 
     def print_ml_report(self, cv_results_dict: Dict[str, Any]) -> None:
-        """Prints styled summary report for Stage 3 ML Gatekeeper."""
-        print("\n" + "=" * 65)
-        print("STAGE 3: LIGHTGBM GATEKEEPER MODEL EVALUATION REPORT")
-        print("=" * 65)
-        print("Purged Walk-Forward Cross-Validation Results:")
-        print(f"  - Mean Precision : {cv_results_dict['mean_precision'] * 100:.2f}%")
-        print(f"  - Mean Recall    : {cv_results_dict['mean_recall'] * 100:.2f}%")
-        print(f"  - Mean ROC-AUC   : {cv_results_dict['mean_roc_auc']:.4f}")
-        print(f"  - Mean PR-AUC    : {cv_results_dict['mean_pr_auc']:.4f}")
-        print("-" * 65)
-        print("Feature Importance Ranking (LightGBM Split Count):")
+        """In báo cáo tổng hợp Giai đoạn 3 định dạng tiếng Việt."""
+        print("\n" + "=" * 70)
+        print("GIAI ĐOẠN 3: BÁO CÁO ĐÁNH GIÁ MÔ HÌNH LIGHTGBM GATEKEEPER")
+        print("=" * 70)
+        print("Kết quả Purged Walk-Forward Cross-Validation:")
+        print(f"  - Độ chính xác trung bình (Precision): {cv_results_dict['mean_precision'] * 100:.2f}%")
+        print(f"  - Độ bao phủ trung bình (Recall)   : {cv_results_dict['mean_recall'] * 100:.2f}%")
+        print(f"  - ROC-AUC Trung bình                : {cv_results_dict['mean_roc_auc']:.4f}")
+        print(f"  - PR-AUC Trung bình                 : {cv_results_dict['mean_pr_auc']:.4f}")
+        print("-" * 70)
+        print("Bảng Tầm quan trọng của Đặc trưng (Feature Importance Ranking):")
         fi_df = cv_results_dict["feature_importance"]
         for _, row in fi_df.iterrows():
             print(f"  - {row['feature']:<20}: {row['importance']}")
-        print("-" * 65)
-        print("Probability Threshold Recommendations for MT5 EA Filtering:")
+        print("-" * 70)
+        print("Khuyến nghị Ngưỡng Xác suất lọc lệnh cho Robot EA MT5:")
         print(cv_results_dict["threshold_analysis"].to_string(index=False))
-        print("=" * 65 + "\n")
+        print("=" * 70 + "\n")
 
 
 class ONNXExporter:
-    """Exports trained LightGBM models to ONNX format for direct MT5 EA integration."""
+    """Xuất mô hình LightGBM sang định dạng ONNX để tích hợp trực tiếp vào Robot EA MetaTrader 5."""
 
     @staticmethod
     def export_to_onnx(
@@ -265,20 +265,19 @@ class ONNXExporter:
         output_path: str
     ) -> bool:
         """
-        Converts trained LightGBM model to ONNX using skl2onnx or onnxmltools.
+        Chuyển đổi mô hình LightGBM sang ONNX bằng skl2onnx hoặc onnxmltools.
 
         Args:
-            model: Fitted LightGBMClassifier.
-            feature_cols: List of feature names.
-            output_path: Target path for .onnx file.
+            model: Mô hình LightGBMClassifier đã train.
+            feature_cols: Danh sách tên đặc trưng.
+            output_path: Đường dẫn file .onnx đầu ra.
 
         Returns:
-            True if export succeeded, False otherwise.
+            True nếu xuất thành công, False nếu thất bại.
         """
-        logger.info(f"Attempting ONNX export for MT5 integration -> {output_path}")
+        logger.info(f"Đang tiến hành xuất mô hình sang ONNX cho MT5 EA -> {output_path}")
 
         try:
-            # Attempt export via onnxmltools or skl2onnx
             from skl2onnx import convert_sklearn
             from skl2onnx.common.data_types import FloatTensorType
 
@@ -288,11 +287,11 @@ class ONNXExporter:
             with open(output_path, "wb") as f:
                 f.write(onnx_model.SerializeToString())
 
-            logger.info(f"Successfully exported LightGBM model to ONNX: {output_path}")
+            logger.info(f"Xuất thành công mô hình ONNX: {output_path}")
             return True
 
         except Exception as err1:
-            logger.warning(f"skl2onnx direct conversion failed: {err1}. Trying lightgbm native / onnxmltools...")
+            logger.warning(f"Chuyển đổi skl2onnx trực tiếp không thành công: {err1}. Đang thử qua onnxmltools...")
             try:
                 import onnxmltools
                 from onnxmltools.convert.common.data_types import FloatTensorType
@@ -303,20 +302,20 @@ class ONNXExporter:
                 with open(output_path, "wb") as f:
                     f.write(onnx_model.SerializeToString())
 
-                logger.info(f"Successfully exported LightGBM model via onnxmltools to ONNX: {output_path}")
+                logger.info(f"Xuất thành công mô hình ONNX qua onnxmltools: {output_path}")
                 return True
             except Exception as err2:
-                logger.error(f"ONNX export requires skl2onnx or onnxmltools packages: {err2}")
-                logger.info("ONNX Code snippet for MT5 EA deployment:")
+                logger.error(f"Xuất ONNX yêu cầu thư viện skl2onnx hoặc onnxmltools: {err2}")
+                logger.info("Mẫu code xuất ONNX thủ công để tích hợp MT5 EA:")
                 print("\n" + "#" * 60)
-                print("# ONNX EXPORT CODE SNIPPET FOR MT5 INTEGRATION")
+                print("# CODE XUẤT MÔ HÌNH ONNX CHO ROBOT EA MT5")
                 print("#" * 60)
                 print("import joblib")
                 print("import skl2onnx")
                 print("from skl2onnx.common.data_types import FloatTensorType")
-                print("# 1. Save joblib model")
+                print("# 1. Lưu mô hình dạng pkl")
                 print("joblib.dump(model, 'v5_gatekeeper_model.pkl')")
-                print("# 2. Convert to ONNX")
+                print("# 2. Chuyển đổi sang ONNX")
                 print(f"initial_types = [('input', FloatTensorType([None, {len(feature_cols)}]))]")
                 print("onnx_model = skl2onnx.convert_sklearn(model, initial_types=initial_types)")
                 print(f"with open('{output_path}', 'wb') as f:")
