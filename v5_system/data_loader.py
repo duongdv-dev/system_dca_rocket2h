@@ -121,13 +121,14 @@ class M1DataLoader:
         logger.info(f"Tổng hợp dataset M1: {len(combined_df):,} nến từ {combined_df['date_vn'].min()} đến {combined_df['date_vn'].max()}")
         return combined_df
 
-    def load_directory(self, directory_path: str, pattern: str = "XAUUSD_*_m1.csv") -> pd.DataFrame:
+    def load_directory(self, directory_path: str, pattern: str = "XAUUSD_*_m1.csv", years: Optional[List[int]] = None) -> pd.DataFrame:
         """
-        Quét thư mục tìm các file CSV phù hợp và nạp dữ liệu.
+        Quét thư mục tìm các file CSV phù hợp và nạp dữ liệu (hỗ trợ lọc theo năm).
 
         Args:
             directory_path: Đường dẫn thư mục.
             pattern: Mẫu glob tìm file.
+            years: Danh sách năm cần lọc (Ví dụ: [2020, 2021]).
 
         Returns:
             DataFrame gộp hoàn chỉnh.
@@ -138,8 +139,28 @@ class M1DataLoader:
         if not matching_files:
             raise FileNotFoundError(f"Không tìm thấy file nào khớp với mẫu '{pattern}' trong {directory_path}")
 
+        # Lọc file theo danh sách năm nếu được chỉ định
+        if years:
+            years_str = [str(y) for y in years]
+            filtered_files = [
+                f for f in matching_files 
+                if any(y_str in os.path.basename(f) for y_str in years_str)
+            ]
+            if filtered_files:
+                matching_files = filtered_files
+                logger.info(f"Đã lọc lấy các file CSV thuộc năm {years}: {[os.path.basename(f) for f in matching_files]}")
+            else:
+                logger.warning(f"Không tìm thấy file CSV nào khớp với các năm {years}. Sẽ dùng toàn bộ file tìm thấy.")
+
         logger.info(f"Tìm thấy {len(matching_files)} file CSV: {[os.path.basename(f) for f in matching_files]}")
-        return self.load_multiple_csvs(matching_files)
+        combined_df = self.load_multiple_csvs(matching_files)
+
+        if years:
+            combined_df = combined_df[combined_df["dt_vn"].dt.year.isin(years)].reset_index(drop=True)
+            logger.info(f"Đã lọc dữ liệu theo năm {years}: {len(combined_df):,} nến M1.")
+
+        return combined_df
+
 
 
 if __name__ == "__main__":

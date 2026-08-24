@@ -3,7 +3,8 @@ Master Orchestrator Script for v5 Intraday Anchor Mean Reversion System (Phiên 
 -----------------------------------------------------------------------------------------
 Thực thi Giai đoạn 1 (Tiền xử lý dữ liệu & Đồng bộ múi giờ UTC+7), 
 Giai đoạn 2 (Trích xuất đặc trưng hành vi & Báo cáo EDA định lượng), 
-và Giai đoạn 3 (Huấn luyện LightGBM Gatekeeper & Xuất mô hình ONNX cho MT5 EA).
+Giai đoạn 3 (Huấn luyện LightGBM Gatekeeper & Xuất mô hình ONNX cho MT5 EA),
+và Kiểm tra Xác thực Out-of-Sample (OOS Validation).
 """
 
 import os
@@ -12,6 +13,7 @@ import logging
 import argparse
 import joblib
 import pandas as pd
+from typing import List, Optional
 
 # Thêm thư mục gốc vào sys.path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,6 +23,7 @@ if BASE_DIR not in sys.path:
 from v5_system.data_loader import M1DataLoader
 from v5_system.feature_engineering import IntradayFeatureExtractor, EDAReporter
 from v5_system.ml_gatekeeper import LightGBMGatekeeper, ONNXExporter
+from v5_system.backtest_validator import OOSBacktestValidator
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +36,9 @@ logger = logging.getLogger("run_v5_pipeline")
 def run_pipeline(
     data_dir: str = BASE_DIR,
     file_pattern: str = "XAUUSD_*_m1.csv",
+    years: Optional[List[int]] = None,
+    train_years: Optional[List[int]] = None,
+    test_years: Optional[List[int]] = None,
     min_dev_usd: float = 1.0,
     output_onnx_path: str = os.path.join(BASE_DIR, "v5_gatekeeper_model.onnx"),
     output_pkl_path: str = os.path.join(BASE_DIR, "v5_gatekeeper_model.pkl"),
@@ -41,10 +47,16 @@ def run_pipeline(
     """
     Chạy toàn bộ pipeline nghiên cứu định lượng và học máy 3 giai đoạn end-to-end.
     """
+    years_str = f" (Các năm: {years})" if years else " (Tất cả các năm 2020-2025)"
     print("\n" + "#" * 75)
     print("      HỆ THỐNG GIAO DỊCH ĐỊNH LƯỢNG INTRADAY ANCHOR MEAN REVERSION (v5_system)      ")
-    print("          XAUUSD 10:00 - 12:00 Giờ Việt Nam (UTC+7 / Asia/Ho_Chi_Minh)            ")
+    print(f"          XAUUSD 10:00 - 12:00 Giờ Việt Nam (UTC+7 / Asia/Ho_Chi_Minh){years_str}")
     print("#" * 75 + "\n")
+
+    # Xác định các năm nạp dữ liệu
+    load_years = years
+    if train_years and test_years:
+        load_years = sorted(list(set(train_years + test_years)))
 
     # =========================================================================
     # GIAI ĐOẠN 1: Tiền xử lý dữ liệu & Chuẩn hóa múi giờ Việt Nam (UTC+7)
@@ -53,7 +65,7 @@ def run_pipeline(
     loader = M1DataLoader(target_tz="Asia/Ho_Chi_Minh")
     
     try:
-        m1_df = loader.load_directory(directory_path=data_dir, pattern=file_pattern)
+        m1_df = loader.load_directory(directory_path=data_dir, pattern=file_pattern, years=load_years)
     except Exception as err:
         logger.error(f"Giai đoạn 1 thất bại khi tải dữ liệu: {err}")
         return
@@ -100,6 +112,21 @@ def run_pipeline(
     except Exception as err:
         logger.error(f"Giai đoạn 3 huấn luyện mô hình Gatekeeper gặp lỗi: {err}", exc_info=True)
 
+    # =========================================================================
+    # KIỂM TRA TÍNH XÁC THỰC OUT-OF-SAMPLE (OOS VALIDATION) NẾU CÓ YÊU CẦU
+    # =========================================================================
+    if train_years and test_years:
+        logger.info("=== ĐANG THỰC THI KIỂM TRA XÁC THỰC OUT-OF-SAMPLE (OOS) ===")
+        validator = OOSBacktestValidator(feature_cols=LightGBMGatekeeper.FEATURE_COLS)
+        try:
+            validator.run_oos_validation(
+                daily_df=daily_df,
+                train_years=train_years,
+                test_years=test_years
+            )
+        except Exception as err:
+            logger.error(f"Lỗi khi thực thi OOS Validation: {err}", exc_info=True)
+
     print("\n" + "=" * 75)
     print("HOÀN THÀNH TOÀN BỘ PIPELINE (v5_system)")
     print("=" * 75 + "\n")
@@ -108,10 +135,16 @@ def run_pipeline(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Chạy Pipeline Intraday Anchor Mean Reversion v5")
     parser.add_argument("--data-dir", type=str, default=BASE_DIR, help="Thư mục chứa các file M1 CSV")
+    parser.add_argument("--years", nargs="+", type=int, default=None, help="Lọc các năm cần chạy thử nghiệm nhanh (Ví dụ: --years 2020 2021)")
+    parser.add_argument("--train-years", nargs="+", type=int, default=None, help="Năm để huấn luyện mô hình OOS (Ví dụ: --train-years 2020 2021 2022 2023 hoặc --train-years 2023)")
+    parser.add_argument("--test-years", nargs="+", type=int, default=None, help="Năm để kiểm thử OOS độc lập (Ví dụ: --test-years 2024)")
     parser.add_argument("--min-dev", type=float, default=1.0, help="Mức lệch giá USD tối thiểu để tính nhãn đảo chiều")
     args = parser.parse_args()
 
     run_pipeline(
         data_dir=args.data_dir,
+        years=args.years,
+        train_years=args.train_years,
+        test_years=args.test_years,
         min_dev_usd=args.min_dev
     )
