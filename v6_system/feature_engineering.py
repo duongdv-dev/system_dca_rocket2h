@@ -1,7 +1,7 @@
 """
 v6_system/feature_engineering.py
 --------------------------------
-Module Feature Engineering cho Version 6 Phase 5 XGBoost V1 (Tối ưu hóa Bộ nhớ & Vectorized).
+Module Feature Engineering cho Version 6 Phase 5 XGBoost V1 (Vectorized & Fast).
 Trích xuất 25 đặc trưng kỹ thuật và gán nhãn Target xác suất hồi về Anchor.
 """
 
@@ -96,7 +96,7 @@ class V6FeatureEngineer:
 
     def extract_session_features_and_targets(self, df_m1: pd.DataFrame) -> pd.DataFrame:
         """
-        Trích xuất 25 đặc trưng và gán nhãn Target bằng thuật toán Vectorized siêu nhanh & tiết kiệm RAM.
+        Trích xuất 25 đặc trưng và gán nhãn Target bằng thuật toán Vectorized.
         """
         logger.info("Bắt đầu trích xuất 25 Features và gán nhãn Target (Vectorized Optimized)...")
 
@@ -118,53 +118,43 @@ class V6FeatureEngineer:
             group = group.sort_values("dt_utc").copy()
             n = len(group)
 
+            group["date"] = str(date_val)
+
             anchor_price = float(group.iloc[0]["open"])
             group["anchor_price"] = anchor_price
 
-            # Features phụ thuộc phiên
             close_vals = group["close"].values
             high_vals = group["high"].values
             low_vals = group["low"].values
             vol_vals = group["volume"].values
 
-            # Distance from anchor
             group["distance_from_anchor"] = close_vals - anchor_price
             group["dist_anchor_over_atr"] = group["distance_from_anchor"].values / (group["atr"].values + 1e-6)
 
-            # Cumulative session VWAP
             pv = close_vals * vol_vals
             cum_pv = np.cumsum(pv)
             cum_vol = np.cumsum(vol_vals)
             group["vwap"] = cum_pv / (cum_vol + 1e-6)
             group["dist_to_vwap"] = close_vals - group["vwap"].values
 
-            # Session High & Low
             group["session_high"] = np.maximum.accumulate(high_vals)
             group["session_low"] = np.minimum.accumulate(low_vals)
 
-            # Time features
             group["time_since_10"] = np.arange(n)
             group["time_remaining_12"] = n - 1 - np.arange(n)
 
-            # VECTORIZED TARGET LABELING (Tương lai trong phiên)
-            # Tính tương lai min low và max high bằng reverse cumulative min/max
             rev_low = low_vals[::-1]
             rev_high = high_vals[::-1]
 
             cum_min_low = np.minimum.accumulate(rev_low)[::-1]
             cum_max_high = np.maximum.accumulate(rev_high)[::-1]
 
-            # Shift 1 nến để lấy giá tương lai từ t+1 tới end
             future_min_low = np.roll(cum_min_low, -1)
             future_min_low[-1] = low_vals[-1]
 
             future_max_high = np.roll(cum_max_high, -1)
             future_max_high[-1] = high_vals[-1]
 
-            # Logic Target:
-            # Nếu current_price > anchor -> target = 1 nếu future_min_low <= anchor
-            # Nếu current_price < anchor -> target = 1 nếu future_max_high >= anchor
-            # Nếu current_price == anchor -> target = 1
             above_mask = close_vals > anchor_price
             below_mask = close_vals < anchor_price
             equal_mask = ~above_mask & ~below_mask

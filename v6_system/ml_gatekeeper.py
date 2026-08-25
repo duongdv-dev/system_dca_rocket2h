@@ -1,7 +1,7 @@
 """
 v6_system/ml_gatekeeper.py
 --------------------------
-Module AI ML Gatekeeper cho Version 6 Phase 5 (Optimized Float32).
+Module AI ML Gatekeeper cho Version 6 Phase 5 (Robust Column Lookups).
 Huấn luyện mô hình XGBoost V1 ước lượng xác suất hồi về Anchor trước 12:00 VN.
 """
 
@@ -45,7 +45,8 @@ class MLGatekeeper:
         """
         logger.info(f"Bắt đầu phân chia Dataset (Train < {split_year}, Test >= {split_year})...")
         
-        df_features["year"] = pd.to_datetime(df_features["date"]).dt.year
+        date_col = "date" if "date" in df_features.columns else ("date_vn" if "date_vn" in df_features.columns else "dt_vn")
+        df_features["year"] = pd.to_datetime(df_features[date_col]).dt.year
         
         train_mask = df_features["year"] < split_year
         test_mask = df_features["year"] >= split_year
@@ -56,7 +57,6 @@ class MLGatekeeper:
         if train_df.empty or test_df.empty:
             raise ValueError("Tập dữ liệu Train/Test rỗng. Kiểm tra phân chia năm.")
 
-        # Chuyển kiểu dữ liệu sang float32 để tiết kiệm 50% bộ nhớ RAM
         X_train = train_df[self.FEATURE_COLS].astype(np.float32)
         y_train = train_df["target_revert"].values.astype(np.int32)
 
