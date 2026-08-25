@@ -1,7 +1,7 @@
 """
 v6_system/ml_gatekeeper.py
 --------------------------
-Module AI ML Gatekeeper cho Version 6 Phase 5.
+Module AI ML Gatekeeper cho Version 6 Phase 5 (Optimized Float32).
 Huấn luyện mô hình XGBoost V1 ước lượng xác suất hồi về Anchor trước 12:00 VN.
 """
 
@@ -56,11 +56,12 @@ class MLGatekeeper:
         if train_df.empty or test_df.empty:
             raise ValueError("Tập dữ liệu Train/Test rỗng. Kiểm tra phân chia năm.")
 
-        X_train = train_df[self.FEATURE_COLS]
-        y_train = train_df["target_revert"]
+        # Chuyển kiểu dữ liệu sang float32 để tiết kiệm 50% bộ nhớ RAM
+        X_train = train_df[self.FEATURE_COLS].astype(np.float32)
+        y_train = train_df["target_revert"].values.astype(np.int32)
 
-        X_test = test_df[self.FEATURE_COLS]
-        y_test = test_df["target_revert"]
+        X_test = test_df[self.FEATURE_COLS].astype(np.float32)
+        y_test = test_df["target_revert"].values.astype(np.int32)
 
         logger.info(f"Kích thước tập Train: {len(X_train):,} dòng | Test: {len(X_test):,} dòng.")
 
@@ -68,11 +69,12 @@ class MLGatekeeper:
         if HAS_XGBOOST:
             logger.info("Huấn luyện bằng mô hình XGBClassifier...")
             self.model = xgb.XGBClassifier(
-                n_estimators=150,
+                n_estimators=100,
                 max_depth=5,
                 learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
+                n_jobs=-1,
                 random_state=self.random_state,
                 eval_metric="logloss"
             )
