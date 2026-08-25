@@ -26,12 +26,17 @@ Phase 4: Robustness Testing & Parameter Plateau Detection (Hoàn thành)
   └── Phân tích ma trận 2D Heatmap & Thuật toán Lân cận 3x3 (Neighborhood Stability)
   └── Phân loại ký hiệu trực quan: [+++] Gold Plateau, [++] Stable Region, [+] Acceptable, [-] Danger Zone
 
-Phase 5: XGBoost V1 Probability Model (AI Gatekeeper) (Hoàn thành / Đang thực thi)
+Phase 5: XGBoost V1 Probability Model (AI Gatekeeper) (Hoàn thành)
   └── AI không điều khiển DCA, chỉ ước lượng xác suất hồi về Anchor trước 12:00 VN
   └── Trích xuất 25 Đặc trưng Kỹ thuật (DistanceFromAnchor, ATR, RSI, ADX, EMAs, Volume Ratio, VWAP, Wicks)
   └── Phân chia Time-Series (Train 2020-2023 | Test 2024-2025), tính ROC-AUC, PR-AUC & Feature Importance
 
-Phase 6: Execution Engine & Live Risk Control (Kế hoạch tiếp theo)
+Phase 6: Advanced AI Labeling System (Xây Label cho AI) (Hoàn thành / Đang thực thi)
+  └── Không train nến tiếp theo tăng/giảm. Train nhãn hồi phiên: Y=1 nếu quay về Anchor / đạt TP trước 12:00, Y=0 nếu không.
+  └── Hỗ trợ 3 bộ nhãn chuyên sâu: y_anchor, y_basket_tp, y_safe_revert.
+  └── So sánh hiệu năng dự báo mô hình AI Gatekeeper trên từng loại nhãn.
+
+Phase 7: Live Execution Engine & Risk Control (Kế hoạch tiếp theo)
   └── Tích hợp AI Gatekeeper với DCA Strategy Engine
   └── Kết nối Live/Demo Execution (MT5 / FIX API)
 ```
@@ -72,22 +77,20 @@ Xác định **Vùng Cao Nguyên Tham Số (Parameter Plateau)** ổn định đ
 Mô hình AI **XGBoost V1** đóng vai trò làm Gatekeeper đưa ra xác suất:
 *"Tại thời điểm hiện tại t, xác suất giá sẽ hồi về Anchor trước 12:00 VN là bao nhiêu?"*
 
-### 2. Danh sách 25 Đặc trưng (Features)
-- `distance_from_anchor`, `dist_anchor_over_atr`
-- `atr`, `atr_norm`
-- `rsi`, `adx`
-- `ema_9`, `ema_21`, `ema_50`, `ema_slope`
-- `volume`, `vol_over_avg`
-- `return_1m`, `return_5m`, `return_15m`, `volatility`
-- `time_since_10`, `time_remaining_12`
-- `session_high`, `session_low`
-- `candle_body`, `upper_wick`, `lower_wick`
-- `vwap`, `dist_to_vwap`
+---
 
-### 3. Đánh giá Mô hình ML
-- Phân chia dữ liệu: **Train (2020–2023)** vs **Test (2024–2025)**.
-- Chỉ số đánh giá: **ROC-AUC**, **PR-AUC**, **Precision**, **Recall**, **F1-Score**.
-- Xuất thứ hạng tầm quan trọng đặc trưng (Feature Importance Ranking).
+## Chi Tiết Phase 6 — Advanced AI Labeling System (Xây Label cho AI)
+
+### 1. Mục tiêu & Quy tắc Gán Nhãn
+- **KHÔNG TRAIN**: Nến tiếp theo tăng/giảm.
+- **TRAIN CHÍNH XÁC**:
+  - `Y = 1`: Giá đạt basket TP / quay về Anchor trước 12:00 VN.
+  - `Y = 0`: Không đạt trước 12:00 VN.
+
+### 2. Các Loại Nhãn Phân Tích
+1. `y_anchor`: Nhãn hồi về Anchor tuyệt đối trước 12:00 VN.
+2. `y_basket_tp`: Nhãn đạt mục tiêu Basket Profit ($) theo tham số DCA.
+3. `y_safe_revert`: Nhãn hồi Anchor an toàn (không bị vi phạm rủi ro Max Adverse Excursion trước khi hồi).
 
 ---
 
@@ -123,6 +126,12 @@ python3 v6_system/test_phase5.py
 python3 v6_system/run_phase5.py
 ```
 
+### Phase 6: Advanced AI Labeling System
+```bash
+python3 v6_system/test_phase6.py
+python3 v6_system/run_phase6.py
+```
+
 ### Output Files (`v6_system/output/`)
 - `daily_sessions_10_12.csv` (Dataset phiên Phase 1)
 - `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
@@ -134,4 +143,5 @@ python3 v6_system/run_phase5.py
 - `phase4_plateau_report.json` (Báo cáo vùng tham số Plateau Phase 4)
 - `phase5_model_metrics.json` (Báo cáo chỉ số mô hình XGBoost V1 Phase 5)
 - `phase5_feature_importance.csv` (Thứ hạng 25 đặc trưng XGBoost Phase 5)
-- `phase5_features_sample.csv` (Mẫu dữ liệu 25 đặc trưng & Target Phase 5)
+- `phase6_label_analysis.json` (Báo cáo so sánh hiệu năng AI trên 3 loại nhãn Phase 6)
+- `phase6_features_labeled.csv` (Dataset đặc trưng và 3 loại nhãn AI Phase 6)

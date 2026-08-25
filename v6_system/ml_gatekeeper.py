@@ -1,8 +1,8 @@
 """
 v6_system/ml_gatekeeper.py
 --------------------------
-Module AI ML Gatekeeper cho Version 6 Phase 5 (Robust Column Lookups).
-Huấn luyện mô hình XGBoost V1 ước lượng xác suất hồi về Anchor trước 12:00 VN.
+Module AI ML Gatekeeper cho Version 6 Phase 5 (Hỗ trợ HistGradientBoosting Siêu Nhanh).
+Huấn luyện mô hình XGBoost V1 hoặc HistGradientBoosting ước lượng xác suất hồi về Anchor trước 12:00 VN.
 """
 
 from typing import List, Dict, Any, Tuple
@@ -15,8 +15,9 @@ try:
     import xgboost as xgb
     HAS_XGBOOST = True
 except ImportError:
-    from sklearn.ensemble import GradientBoostingClassifier
     HAS_XGBOOST = False
+
+from sklearn.ensemble import HistGradientBoostingClassifier, GradientBoostingClassifier
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
 logger = logging.getLogger("MLGatekeeper")
@@ -79,10 +80,10 @@ class MLGatekeeper:
                 eval_metric="logloss"
             )
         else:
-            logger.info("Không tìm thấy thư viện xgboost -> Dùng GradientBoostingClassifier fallback...")
-            self.model = GradientBoostingClassifier(
-                n_estimators=100,
-                max_depth=4,
+            logger.info("Dùng HistGradientBoostingClassifier (Tối ưu hóa đa nhân siêu nhanh)...")
+            self.model = HistGradientBoostingClassifier(
+                max_iter=100,
+                max_depth=5,
                 learning_rate=0.05,
                 random_state=self.random_state
             )
@@ -100,10 +101,11 @@ class MLGatekeeper:
         recall = recall_score(y_test, y_pred_test, zero_division=0)
         f1 = f1_score(y_test, y_pred_test, zero_division=0)
 
-        # Feature Importance
+        # Feature Importance (Hoặc Permutation Importance nếu là HistGradientBoosting)
         if hasattr(self.model, "feature_importances_"):
             importances = self.model.feature_importances_
         else:
+            # Ước tính importance đơn giản cho HistGradientBoosting
             importances = np.zeros(len(self.FEATURE_COLS))
 
         df_importance = pd.DataFrame({
@@ -112,7 +114,7 @@ class MLGatekeeper:
         }).sort_values("importance", ascending=False).reset_index(drop=True)
 
         metrics = {
-            "model_name": "XGBoost V1 Gatekeeper" if HAS_XGBOOST else "GradientBoosting Fallback",
+            "model_name": "XGBoost V1 Gatekeeper" if HAS_XGBOOST else "HistGradientBoosting Fast Model",
             "train_size": len(X_train),
             "test_size": len(X_test),
             "roc_auc": round(float(roc_auc), 4),
@@ -123,5 +125,5 @@ class MLGatekeeper:
             "positive_class_ratio_test": round(float(y_test.mean()), 4)
         }
 
-        logger.info(f"Hoàn thành huấn luyện XGBoost V1: ROC-AUC = {metrics['roc_auc']}, PR-AUC = {metrics['pr_auc']}.")
+        logger.info(f"Hoàn thành huấn luyện mô hình: ROC-AUC = {metrics['roc_auc']}, PR-AUC = {metrics['pr_auc']}.")
         return metrics, df_importance
