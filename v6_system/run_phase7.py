@@ -8,6 +8,7 @@ Runner script thực thi Phase 7 - AI Filter & So Sánh Thực Nghiệm V0 vs V1
 import sys
 import os
 import json
+from typing import Dict, Any, List, Tuple, Optional
 import pandas as pd
 import numpy as np
 
@@ -105,11 +106,9 @@ def main():
     # 2. Huấn luyện mô hình XGBoost V1 Gatekeeper
     print("\n[Bước 2/4] Huấn luyện AI Gatekeeper & Dự báo xác suất P(reversion)...")
     gatekeeper = MLGatekeeper(random_state=42)
-    # Gán target cho mô hình
     df_labeled["target_revert"] = df_labeled["y_anchor"]
     gatekeeper.train_and_evaluate(df_labeled, split_year=2024)
 
-    # Tính xác suất P(reversion) trên toàn bộ dataset
     X_all = df_labeled[MLGatekeeper.FEATURE_COLS].astype(np.float32)
     df_labeled["prob_revert"] = gatekeeper.model.predict_proba(X_all)[:, 1]
 
@@ -161,7 +160,6 @@ def main():
     # 4. Trả lời 7 câu hỏi kiểm chứng thực nghiệm
     print("\n[Bước 4/4] Báo cáo 7 Câu Hỏi Đánh Giá Thực Nghiệm V0 vs V1+AI...")
     
-    # So sánh Baseline V0 với bộ lọc AI tốt nhất (ví dụ Threshold = 0.70)
     best_ai = perf_ai_70
 
     q1_pf = best_ai["profit_factor"] > perf_v0["profit_factor"]
@@ -182,10 +180,8 @@ def main():
         "7. Force Close count 12:00 giảm?": f"{q7_fc} (Baseline: {perf_v0['force_close_count']} -> AI: {best_ai['force_close_count']})"
     }
 
-    # Tổng số tiêu chí AI chiến thắng
     score_ai_wins = sum([q1_pf, q2_dd, q3_dca, q4_loss, q5_tail, q6_avg, q7_fc])
 
-    # Xuất kết quả báo cáo JSON
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     report_json_path = os.path.join(OUTPUT_DIR, "phase7_comparison_report.json")
     with open(report_json_path, "w", encoding="utf-8") as f:
@@ -195,7 +191,6 @@ def main():
             "ai_wins_count": score_ai_wins
         }, f, ensure_ascii=False, indent=2)
 
-    # In bảng so sánh đối chứng
     print("\n" + "=" * 115)
     print("                BẢNG SO SÁNH ĐỐI CHỨNG THỰC NGHIỆM: BASELINE V0 vs V1 + AI FILTER")
     print("=" * 115)
@@ -224,7 +219,6 @@ def main():
         print(f" {symbol} | {q:<35} : {ans}")
     print("*" * 85)
 
-    # PHÁN QUYẾT CHÍNH THỨC
     print("\n" + "#" * 85)
     print("                      PHÁN QUYẾT CHÍNH THỨC (OFFICIAL VERDICT)")
     print("#" * 85)
