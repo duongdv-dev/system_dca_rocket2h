@@ -225,6 +225,14 @@ class IntradayFeatureExtractor:
                         revert_minute = elapsed_min
                         break
 
+            # Lấy giá đóng cửa 12:00 PM (Time-Stop Hard Exit)
+            p1200_bars = session_bars[(session_bars["hour_vn"] == 12) & (session_bars["minute_vn"] == 0)]
+            if len(p1200_bars) > 0:
+                p1200 = p1200_bars["close"].iloc[0]
+            else:
+                p1200 = session_bars["close"].iloc[-1]
+            close_dev_1200 = abs(p1200 - p0)
+
             dist_vwap = (p0 - asian_vwap) / p0 * 1000.0
             dist_ema50 = p0 - ema50
             dist_ema200 = p0 - ema200
@@ -233,6 +241,7 @@ class IntradayFeatureExtractor:
             record = {
                 "date": current_date,
                 "p0": p0,
+                "p1200": p1200,
                 "p0_time": p0_time,
                 "dayofweek": day_of_week,
                 # Đặc trưng trước 10:00 AM
@@ -258,11 +267,13 @@ class IntradayFeatureExtractor:
                 "mae_up": float(mae_up),
                 "mae_down": float(mae_down),
                 "max_mae": float(max_mae),
+                "close_dev_1200": float(close_dev_1200),
                 "has_deviated": 1 if has_deviated else 0,
                 "reverted": reverted,
                 "revert_minute": revert_minute,
                 "first_dev_direction": first_dev_direction,
             }
+
             records.append(record)
 
         daily_df = pd.DataFrame(records)
