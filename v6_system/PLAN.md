@@ -31,14 +31,15 @@ Phase 5: XGBoost V1 Probability Model (AI Gatekeeper) (Hoàn thành)
   └── Trích xuất 25 Đặc trưng Kỹ thuật (DistanceFromAnchor, ATR, RSI, ADX, EMAs, Volume Ratio, VWAP, Wicks)
   └── Phân chia Time-Series (Train 2020-2023 | Test 2024-2025), tính ROC-AUC, PR-AUC & Feature Importance
 
-Phase 6: Advanced AI Labeling System (Xây Label cho AI) (Hoàn thành / Đang thực thi)
+Phase 6: Advanced AI Labeling System (Xây Label cho AI) (Hoàn thành)
   └── Không train nến tiếp theo tăng/giảm. Train nhãn hồi phiên: Y=1 nếu quay về Anchor / đạt TP trước 12:00, Y=0 nếu không.
   └── Hỗ trợ 3 bộ nhãn chuyên sâu: y_anchor, y_basket_tp, y_safe_revert.
   └── So sánh hiệu năng dự báo mô hình AI Gatekeeper trên từng loại nhãn.
 
-Phase 7: Live Execution Engine & Risk Control (Kế hoạch tiếp theo)
-  └── Tích hợp AI Gatekeeper với DCA Strategy Engine
-  └── Kết nối Live/Demo Execution (MT5 / FIX API)
+Phase 7: AI Filter & Empirical V0 vs V1+AI Comparison (Hoàn thành / Đang thực thi)
+  └── Tích hợp mô hình AI Filter kiểm soát xác suất P(reversion) >= Threshold trước khi mở lệnh DCA.
+  └── So sánh đối chứng 7 chỉ số khoa học giữa Baseline V0 vs Strategy V1 + AI Filter.
+  └── Đưa ra phán quyết chính thức: Giữ AI nếu cải thiện rõ rệt, hoặc DỪNG AI nếu không tạo edge mới.
 ```
 
 ---
@@ -87,10 +88,27 @@ Mô hình AI **XGBoost V1** đóng vai trò làm Gatekeeper đưa ra xác suất
   - `Y = 1`: Giá đạt basket TP / quay về Anchor trước 12:00 VN.
   - `Y = 0`: Không đạt trước 12:00 VN.
 
-### 2. Các Loại Nhãn Phân Tích
-1. `y_anchor`: Nhãn hồi về Anchor tuyệt đối trước 12:00 VN.
-2. `y_basket_tp`: Nhãn đạt mục tiêu Basket Profit ($) theo tham số DCA.
-3. `y_safe_revert`: Nhãn hồi Anchor an toàn (không bị vi phạm rủi ro Max Adverse Excursion trước khi hồi).
+---
+
+## Chi Tiết Phase 7 — AI Filter & Empirical V0 vs V1+AI Comparison
+
+### 1. Mục tiêu & Cơ chế AI Filter
+- Khi xuất hiện tín hiệu DCA, AI kiểm tra xác suất $P(\text{reversion}) \ge \text{Threshold}$.
+- Nếu $P \ge \text{Threshold}$ -> Cho phép DCA.
+- Nếu $P < \text{Threshold}$ -> Chặn / Không DCA thêm.
+
+### 2. Bảy Câu Hỏi Kiểm Chứng Thực Nghiệm
+1. AI có Tăng Profit Factor?
+2. AI có Giảm Drawdown?
+3. AI có Giảm Max DCA?
+4. AI có Giảm Losing Days?
+5. AI có Giảm Tail Risk (Worst Month / Worst Day)?
+6. AI có Tăng Average Profit?
+7. AI có Giảm Số Lần Force Close 12:00?
+
+### 3. Phán Quyết Khoa Học
+- Đạt $\ge 4/7$ tiêu chuẩn -> Giữ mô hình AI Filter.
+- Đạt $< 4/7$ tiêu chuẩn -> **DỪNG AI TẠI ĐÂY**, không cố nhồi AI vào chiến lược.
 
 ---
 
@@ -132,6 +150,12 @@ python3 v6_system/test_phase6.py
 python3 v6_system/run_phase6.py
 ```
 
+### Phase 7: AI Filter & V0 vs V1+AI Comparison
+```bash
+python3 v6_system/test_phase7.py
+python3 v6_system/run_phase7.py
+```
+
 ### Output Files (`v6_system/output/`)
 - `daily_sessions_10_12.csv` (Dataset phiên Phase 1)
 - `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
@@ -145,3 +169,4 @@ python3 v6_system/run_phase6.py
 - `phase5_feature_importance.csv` (Thứ hạng 25 đặc trưng XGBoost Phase 5)
 - `phase6_label_analysis.json` (Báo cáo so sánh hiệu năng AI trên 3 loại nhãn Phase 6)
 - `phase6_features_labeled.csv` (Dataset đặc trưng và 3 loại nhãn AI Phase 6)
+- `phase7_comparison_report.json` (Báo cáo so sánh đối chứng 7 chỉ số V0 vs V1+AI Phase 7)
