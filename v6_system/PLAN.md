@@ -7,17 +7,18 @@ Hệ thống giao dịch tự động XAUUSD Version 6 (`v6_system`) được th
 ## Tổng Quan Các Phase (Multi-Phase Roadmap)
 
 ```
-Phase 1: Data Engineering (Hiện tại)
+Phase 1: Data Engineering (Hoàn thành)
   └── Đọc & kiểm định dữ liệu thô Dukascopy 2020-2025
   └── Kiểm tra Timeframe, Timezone (Asia/Ho_Chi_Minh), OHLC, Volume, Duplicate, Gap, DST
   └── Trích xuất phiên 10:00 -> 12:00 VN & các chỉ số (anchor_price, candle 10:00/12:00, high/low/close)
 
-Phase 2: Feature Engineering & Signal Generation
-  └── Tính toán các chỉ báo phiên (Session Range, Anchor Deviation, Volatility Spikes)
-  └── Xây dựng các quy tắc vào lệnh (Strategy Rules) dựa trên phiên 10:00 - 12:00 VN
+Phase 2: Strategy Baseline V0 (Hoàn thành / Đang thực thi)
+  └── Đánh giá ý tưởng DCA gốc có Edge hay không (không tối ưu hóa, không AI)
+  └── Anchor 10:00 VN, Step cố định, Multiplier = 1.0, Lot = 0.01
+  └── TP = Basket Profit ($), Force Close = 12:00 VN, Max cycle/day = 1
 
-Phase 3: Backtest Engine & Performance Analytics
-  └── Giả lập khớp lệnh chi tiết (Spread, Slippage, Swap, Commission)
+Phase 3: Backtest Engine & Advanced Performance Analytics
+  └── Giả lập chi tiết Spread, Slippage, Swap, Commission
   └── Thống kê Sharpe, Sortino, Max Drawdown, Win Rate, Expectancy
 
 Phase 4: AI / ML Gatekeeper & Parameter Optimization
@@ -69,35 +70,48 @@ Biến dữ liệu nến M1 XAUUSD thô từ Dukascopy (giai đoạn 2020–2025
 
 ---
 
-## 3. Cấu Trúc Session Output 10:00 → 12:00 VN
+## Chi Tiết Phase 2 — Strategy Baseline V0
 
-Dữ liệu tổng hợp phiên hàng ngày (`daily_sessions_10_12.csv`) bao gồm các cột:
+### 1. Mục tiêu Cốt lõi
+Đây là phase quan trọng nhất nhằm thử nghiệm chiến lược đơn giản nhất ở dạng nguyên bản để kiểm chứng câu hỏi: **Strategy DCA cơ bản có Edge / hoạt động hay không?** (Chưa thực hiện tối ưu hóa hay AI).
 
-- `date`: Ngày giao dịch (`YYYY-MM-DD` giờ VN)
-- `anchor_price`: Giá Open tại nến 10:00 VN
-- `open_1000`, `high_1000`, `low_1000`, `close_1000`, `volume_1000`: Chi tiết nến 10:00 VN
-- `open_1200`, `high_1200`, `low_1200`, `close_1200`, `volume_1200`: Chi tiết nến 12:00 VN
-- `session_high`: Giá High cao nhất trong khoảng 10:00 → 12:00 VN
-- `session_low`: Giá Low thấp nhất trong khoảng 10:00 → 12:00 VN
-- `session_close`: Giá Close phiên (Close nến 12:00 VN)
-- `candle_count`: Số nến M1 thực tế trong phiên
+### 2. Luật Giao Dịch V0
+
+1. **Khởi tạo (10:00 VN)**:
+   - Tại nến `10:00:00 VN`, xác định `Anchor = Open Price`.
+   - Giới hạn: `Max cycle/day = 1`.
+
+2. **Kích hoạt Lệnh DCA**:
+   - **Giá tăng**: `Anchor + k * Step` -> Mở lệnh **SELL** tầng `k` (Khối lượng Lot = 0.01).
+   - **Giá giảm**: `Anchor - k * Step` -> Mở lệnh **BUY** tầng `k` (Khối lượng Lot = 0.01).
+
+3. **Tham số Cố định (V0 Baseline)**:
+   - `Lot`: `0.01` (Cố định).
+   - `Multiplier`: `1.0` (Cố định khối lượng tất cả tầng).
+   - `Step`: Cố định (Ví dụ thử nghiệm $2.0, $3.0, $5.0).
+   - `Max DCA`: Cố định (Ví dụ 3, 5, 10 tầng).
+   - `TP`: `Basket Profit` ($) (Lợi nhuận giỏ lệnh).
+   - `Force Close`: Đúng **12:00:00 VN** đóng 100% lệnh đang mở.
 
 ---
 
-## 4. Hướng Dẫn Vận Hành Code Phase 1
+## Hướng Dẫn Vận Hành Code Version 6
 
-### Chạy Unit Test
+### Phase 1: Data Engineering
 ```bash
 python3 v6_system/test_phase1.py
-```
-
-### Chạy Pipeline Phase 1
-```bash
 python3 v6_system/run_phase1.py
 ```
 
-### Kết quả đầu ra
-File kết quả được lưu tự động tại `v6_system/output/`:
-- `v6_system/output/daily_sessions_10_12.csv`
-- `v6_system/output/clean_m1_2020_2025.csv`
-- `v6_system/output/data_quality_report.json`
+### Phase 2: Strategy Baseline V0
+```bash
+python3 v6_system/test_phase2.py
+python3 v6_system/run_phase2.py
+```
+
+### Output Files (`v6_system/output/`)
+- `daily_sessions_10_12.csv` (Dataset phiên hàng ngày Phase 1)
+- `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
+- `data_quality_report.json` (Báo cáo chất lượng Phase 1)
+- `phase2_baseline_summary.json` (Báo cáo kết quả so sánh Phase 2)
+- `phase2_daily_trades_preset1.csv` (Chi tiết giao dịch từng ngày Phase 2)
