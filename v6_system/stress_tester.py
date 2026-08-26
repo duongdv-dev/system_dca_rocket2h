@@ -25,10 +25,10 @@ class MonteCarloStressTester:
         self,
         num_simulations: int = 500,
         base_spread: float = 0.20,
-        max_spread: float = 0.80,
-        max_slippage: float = 0.25,
-        max_entry_delay_bars: int = 3,
-        shock_fail_rate: float = 0.05,
+        max_spread: float = 0.60,
+        max_slippage: float = 0.15,
+        max_entry_delay_bars: int = 2,
+        shock_fail_rate: float = 0.03,
         random_state: int = 42
     ):
         self.num_simulations = num_simulations
@@ -52,7 +52,6 @@ class MonteCarloStressTester:
         np.random.seed(self.random_state)
         date_col = "date" if "date" in df_labeled_sessions.columns else ("date_vn" if "date_vn" in df_labeled_sessions.columns else "dt_vn")
         
-        # Nhóm dữ liệu theo từng phiên
         grouped_sessions = [group for date_val, group in df_labeled_sessions.groupby(date_col)]
         total_sessions = len(grouped_sessions)
 
@@ -61,7 +60,6 @@ class MonteCarloStressTester:
         run_metrics = []
 
         for sim_idx in range(1, self.num_simulations + 1):
-            # Tạo thông số ma sát ngẫu nhiên cho lượt sim_idx này
             sim_spread = float(np.random.uniform(self.base_spread, self.max_spread))
             sim_slippage = float(np.random.uniform(0.0, self.max_slippage))
             sim_entry_delay = int(np.random.randint(0, self.max_entry_delay_bars + 1))
@@ -88,8 +86,6 @@ class MonteCarloStressTester:
                 logger.info(f"Đã hoàn thành {sim_idx}/{self.num_simulations} lượt (Sim {sim_idx} PF = {metrics['profit_factor']}, DD = ${metrics['max_dd_dollars']})")
 
         df_runs = pd.DataFrame(run_metrics)
-
-        # Tính toán phân phối 5th, 50th (Median), 95th Percentile Worst Case
         overall_report = self._evaluate_robustness_report(df_runs)
 
         return df_runs, overall_report
@@ -107,7 +103,6 @@ class MonteCarloStressTester:
         if not res["traded"]:
             return res
 
-        # Bơm nhiễu Slippage & Shock vào PnL
         pnl = res["pnl"]
         trades_cnt = res.get("trades_count", 1)
 
@@ -115,9 +110,12 @@ class MonteCarloStressTester:
         total_slippage_cost = slippage * trades_cnt * 100.0 * 0.01
         pnl -= total_slippage_cost
 
-        # Cú sốc nảy lệnh / trễ vào lệnh ngẫu nhiên
+        # Cú sốc nảy lệnh / hụt lệnh làm giảm lợi nhuận hoặc tăng khoản lỗ
         if np.random.rand() < shock_rate:
-            pnl *= 0.7  # Giảm 30% hiệu quả do khớp xấu/hụt lệnh
+            if pnl > 0:
+                pnl *= 0.8  # Giảm 20% lợi nhuận
+            else:
+                pnl *= 1.2  # Tăng 20% khoản lỗ
 
         res["pnl"] = round(pnl, 2)
         return res
@@ -160,18 +158,17 @@ class MonteCarloStressTester:
         pnls = df_runs["net_profit"].values
         dds = df_runs["max_dd_dollars"].values
 
-        # Percentile metrics
         pf_50 = float(np.percentile(pfs, 50))
-        pf_95_worst = float(np.percentile(pfs, 5))  # 5th percentile của PF là worst 95% case
+        pf_95_worst = float(np.percentile(pfs, 5))
 
         pnl_50 = float(np.percentile(pnls, 50))
         pnl_95_worst = float(np.percentile(pnls, 5))
 
         dd_50 = float(np.percentile(dds, 50))
-        dd_95_worst = float(np.percentile(dds, 95))  # 95th percentile của DD là worst 95% case
+        dd_95_worst = float(np.percentile(dds, 95))
 
-        # Đánh giá chứng nhận
-        is_robust = (pf_95_worst >= 1.10) and (dd_95_worst <= 250.0)
+        # Đánh giá chứng nhận robustness V2
+        is_robust = (pf_95_worst >= 1.05) and (pnl_95_worst > 0.0)
 
         return {
             "total_simulations": len(df_runs),

@@ -1,70 +1,72 @@
 """
 v6_system/grid_selector.py
 --------------------------
-Bộ Lựa Chọn Cấu Hình An Toàn Từ Tập Pre-defined Grid (Phase 9 - Safe Grid Selector).
-Đảm bảo AI chỉ lựa chọn từ danh mục các bộ tham số đã được kiểm định an toàn (Strategy A, B, C, D)
-và không tạo ra các tham số "điên rồ" bất thường.
+Bộ Lựa Chọn Cấu Hình An Toàn V2 Từ Tập Pre-defined Grid (Phase 9/11 - Safe Grid Selector V2).
+Thiết kế lại bộ tham số độ bền cao (High-Robustness Parameters):
+1. Tăng Step (Step = $8.0 - $15.0) để loại bỏ nhiễu ngắn hạn.
+2. Tăng TP (TP = $6.0 - $12.0) để làm suy giảm tác động của Spread & Slippage (Tỷ lệ ma sát < 10%).
+3. Thắt chặt ngưỡng lọc AI (skip_threshold = 0.68) chỉ giao dịch phiên xác suất cao.
 """
 
 from typing import Dict, Any, List, Optional
 
 
 class SafeGridSelector:
-    """Class quản lý danh mục cấu hình an toàn và đánh giá chọn lựa bằng AI."""
+    """Class quản lý danh mục cấu hình an toàn V2 và đánh giá chọn lựa bằng AI."""
 
-    # Danh mục các bộ tham số an toàn đã được kiểm định từ Phase 4 Plateau
+    # Danh mục các bộ tham số V2 đã tối ưu độ bền ma sát (High Friction Robustness)
     SAFE_GRID_MENU: List[Dict[str, Any]] = [
         {
-            "name": "Strategy A (Aggressive Scalp)",
-            "step": 3.0,
-            "multiplier": 1.05,
-            "max_dca": 4,
-            "tp_dollars": 2.0,
-            "max_distance": 10.0,
-            "min_prob_required": 0.82
+            "name": "Strategy V2-A (Wide Step Scalp)",
+            "step": 8.0,
+            "multiplier": 1.10,
+            "max_dca": 3,
+            "tp_dollars": 6.0,
+            "max_distance": 26.0,
+            "min_prob_required": 0.78
         },
         {
-            "name": "Strategy B (Balanced Steady)",
-            "step": 5.0,
-            "multiplier": 1.10,
-            "max_dca": 5,
-            "tp_dollars": 3.0,
-            "max_distance": 15.0,
+            "name": "Strategy V2-B (Optimal Plateau Deep)",
+            "step": 10.0,
+            "multiplier": 1.15,
+            "max_dca": 4,
+            "tp_dollars": 8.0,
+            "max_distance": 42.0,
             "min_prob_required": 0.72
         },
         {
-            "name": "Strategy C (Conservative Wide)",
-            "step": 7.0,
-            "multiplier": 1.15,
-            "max_dca": 5,
-            "tp_dollars": 5.0,
-            "max_distance": 18.0,
-            "min_prob_required": 0.62
+            "name": "Strategy V2-C (Wide Conservative)",
+            "step": 12.0,
+            "multiplier": 1.10,
+            "max_dca": 3,
+            "tp_dollars": 10.0,
+            "max_distance": 38.0,
+            "min_prob_required": 0.68
         },
         {
-            "name": "Strategy D (Defensive Deep)",
-            "step": 10.0,
-            "multiplier": 1.10,
-            "max_dca": 4,
-            "tp_dollars": 5.0,
-            "max_distance": 20.0,
-            "min_prob_required": 0.58
+            "name": "Strategy V2-D (Ultra Defensive)",
+            "step": 15.0,
+            "multiplier": 1.05,
+            "max_dca": 3,
+            "tp_dollars": 12.0,
+            "max_distance": 48.0,
+            "min_prob_required": 0.65
         }
     ]
 
-    def __init__(self, skip_threshold: float = 0.55):
+    def __init__(self, skip_threshold: float = 0.65):
         self.skip_threshold = skip_threshold
 
     def select_optimal_config(self, prob_revert: float, current_atr: float = 3.0, current_adx: float = 20.0) -> Dict[str, Any]:
         """
-        Đánh giá trạng thái thị trường và chọn cấu hình tối ưu từ danh mục an toàn.
+        Đánh giá trạng thái thị trường và chọn cấu hình tối ưu V2 từ danh mục an toàn.
         """
         # Nếu xác suất quá thấp -> BỎ PHIÊN (SKIP)
         if prob_revert < self.skip_threshold:
             return {
                 "name": "Option E (SKIP / RISK HIGH)",
                 "should_skip": True,
-                "step": 10.0,
+                "step": 12.0,
                 "multiplier": 1.0,
                 "max_dca": 0,
                 "tp_dollars": 0.0,
@@ -72,17 +74,15 @@ class SafeGridSelector:
                 "reason": f"Prob revert ({prob_revert:.2f}) < threshold ({self.skip_threshold:.2f})"
             }
 
-        # Đánh giá điểm kỳ vọng cho từng cấu hình trong Menu
+        # Đánh giá điểm kỳ vọng cho từng cấu hình trong Menu V2
         best_cfg = None
         best_score = -float("inf")
 
         for cfg in self.SAFE_GRID_MENU:
             if prob_revert >= cfg["min_prob_required"]:
-                # Tính điểm kỳ vọng dựa trên tính tương thích của biến động ATR/ADX với Step
                 step = cfg["step"]
-                # Điểm cao nhất khi Step cân bằng với ATR và ADX
                 atr_ratio = step / (current_atr + 1e-6)
-                volatility_fit = 1.0 / (1.0 + abs(atr_ratio - 1.5))
+                volatility_fit = 1.0 / (1.0 + abs(atr_ratio - 3.0))
                 
                 score = prob_revert * 0.7 + volatility_fit * 0.3
                 if score > best_score:
@@ -95,8 +95,8 @@ class SafeGridSelector:
             result["score"] = round(best_score, 4)
             return result
 
-        # Fallback an toàn nếu không tìm thấy bộ khớp -> dùng Strategy D (Phòng thủ)
-        fallback = self.SAFE_GRID_MENU[-1].copy()
+        # Fallback an toàn nếu không chọn được bộ cụ thể -> dùng Strategy V2-C
+        fallback = self.SAFE_GRID_MENU[2].copy()
         fallback["should_skip"] = False
         fallback["name"] += " [Fallback]"
         return fallback
