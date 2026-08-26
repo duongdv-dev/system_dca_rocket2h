@@ -46,10 +46,15 @@ Phase 8: Adaptive DCA (Điều Khiển Tham Số Thích Ứng Theo AI) (Hoàn th
   └── Tích hợp Stop Loss cứng (Max Distance) khống chế hoàn toàn rủi ro Tail Risk.
   └── So sánh tổng thể hiệu năng Baseline V0 vs Static Plateau vs Adaptive DCA.
 
-Phase 9: AI Parameter Selection (Lựa Chọn Cấu Hình An Toàn Từ Pre-defined Grid) (Hoàn thành / Đang thực thi)
+Phase 9: AI Parameter Selection (Lựa Chọn Cấu Hình An Toàn Từ Pre-defined Grid) (Hoàn thành)
   └── AI không tự tạo ra tham số ngẫu nhiên "điên rồ" (như Step=6.37).
   └── AI lựa chọn bộ tham số tối ưu từ Danh Mục An Toàn Được Duyệt Trước (Strategy A, B, C, D) hoặc SKIP.
   └── Đảm bảo tính an toàn 100% và khống chế tối đa rủi ro vận hành.
+
+Phase 10: Walk-Forward Testing & Generalization Verification (Hoàn thành / Đang thực thi)
+  └── Kiểm thử cuộn thời gian 4 Folds cuộn cửa sổ mở rộng (Expanding Windows): Test 2022, 2023, 2024, 2025 OOS.
+  └── Ghép nối kết quả Out-of-Sample thực tế và tính chỉ số Walk-Forward Efficiency (WFE >= 0.70).
+  └── Khẳng định năng lực khái quát hóa của hệ thống trên dữ liệu tương lai chưa từng thấy.
 ```
 
 ---
@@ -115,12 +120,21 @@ Cho phép AI chủ động phân loại trạng thái thị trường và gán t
 ## Chi Tiết Phase 9 — AI Parameter Selection (Lựa Chọn Cấu Hình An Toàn)
 
 ### 1. Mục tiêu An Toàn
-AI lựa chọn bộ tham số từ **Danh Mục Cấu Hình An Toàn Đã Được Duyệt Trước (Pre-defined Safe Grid Menu)**:
-- **Strategy A (Aggressive Scalp)**: `Step $3.0 | Mult 1.05 | MaxDCA 4 | SL $10.0`
-- **Strategy B (Balanced Steady)**: `Step $5.0 | Mult 1.10 | MaxDCA 5 | SL $15.0`
-- **Strategy C (Conservative Wide)**: `Step $7.0 | Mult 1.15 | MaxDCA 5 | SL $18.0`
-- **Strategy D (Defensive Deep)**: `Step $10.0 | Mult 1.10 | MaxDCA 4 | SL $20.0`
-- **Option E (SKIP)**: Bỏ phiên khi xác suất $P < 0.55$.
+AI lựa chọn bộ tham số từ **Danh Mục Cấu Hình An Toàn Đã Được Duyệt Trước (Pre-defined Safe Grid Menu)** (Strategy A, B, C, D, SKIP).
+
+---
+
+## Chi Tiết Phase 10 — Walk-Forward Testing & Generalization Verification
+
+### 1. Mục tiêu & Cấu trúc 4 Folds (Expanding Windows)
+- **Fold 1**: Train `2020–2021` | Out-of-Sample Test: `2022`
+- **Fold 2**: Train `2020–2022` | Out-of-Sample Test: `2023`
+- **Fold 3**: Train `2020–2023` | Out-of-Sample Test: `2024`
+- **Fold 4**: Train `2020–2024` | Out-of-Sample Test: `2025`
+
+### 2. Chỉ số Nghiệm Thu Khái Quát Hóa
+- **Walk-Forward Efficiency Ratio (WFE)**: $\frac{\text{Out-of-Sample Profit Factor}}{\text{In-Sample Profit Factor}} \ge 0.70$.
+- Kết nối đường cong tài sản Out-of-Sample thực tế của 4 năm 2022–2025.
 
 ---
 
@@ -180,6 +194,12 @@ python3 v6_system/test_phase9.py
 python3 v6_system/run_phase9.py
 ```
 
+### Phase 10: Walk-Forward Testing (Expanding Windows)
+```bash
+python3 v6_system/test_phase10.py
+python3 v6_system/run_phase10.py
+```
+
 ### Output Files (`v6_system/output/`)
 - `daily_sessions_10_12.csv` (Dataset phiên Phase 1)
 - `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
@@ -197,4 +217,6 @@ python3 v6_system/run_phase9.py
 - `phase8_adaptive_summary.json` (Báo cáo tổng hợp hiệu năng Adaptive DCA Phase 8)
 - `phase8_comparison.csv` (Bảng so sánh 3 hệ thống V0 vs Static vs Adaptive Phase 8)
 - `phase9_grid_ai_summary.json` (Báo cáo tổng hợp hiệu năng Safe Grid AI Selector Phase 9)
-- `phase9_selection_distribution.csv` (Tần suất phân phối các cấu hình an toàn được AI chọn Phase 9)
+- `phase9_selection_distribution.csv` (Tần suất phân phối các cấu hình an toàn Phase 9)
+- `phase10_walk_forward_summary.json` (Báo cáo tổng hợp kiểm thử 4 Folds Walk-Forward Phase 10)
+- `phase10_oos_trades.csv` (Chi tiết nhật ký giao dịch Out-of-Sample thực tế 2022-2025 Phase 10)
