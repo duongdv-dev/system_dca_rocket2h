@@ -51,10 +51,15 @@ Phase 9: AI Parameter Selection (Lựa Chọn Cấu Hình An Toàn Từ Pre-defi
   └── AI lựa chọn bộ tham số tối ưu từ Danh Mục An Toàn Được Duyệt Trước (Strategy A, B, C, D) hoặc SKIP.
   └── Đảm bảo tính an toàn 100% và khống chế tối đa rủi ro vận hành.
 
-Phase 10: Walk-Forward Testing & Generalization Verification (Hoàn thành / Đang thực thi)
+Phase 10: Walk-Forward Testing & Generalization Verification (Hoàn thành)
   └── Kiểm thử cuộn thời gian 4 Folds cuộn cửa sổ mở rộng (Expanding Windows): Test 2022, 2023, 2024, 2025 OOS.
   └── Ghép nối kết quả Out-of-Sample thực tế và tính chỉ số Walk-Forward Efficiency (WFE >= 0.70).
   └── Khẳng định năng lực khái quát hóa của hệ thống trên dữ liệu tương lai chưa từng thấy.
+
+Phase 11: Monte Carlo / Stress Testing & Robustness Certification (Hoàn thành / Đang thực thi)
+  └── Bơm 5 yếu tố ma sát thực tế (Spread expansion, Slippage, Entry delay, Exit delay, DCA Execution shock) qua 500+ Monte Carlo runs.
+  └── Đánh giá 95th Percentile Worst Case (PF >= 1.10, Max DD <= 25.0%).
+  └── Cấp Chứng Nhận Robustness Certificate khẳng định hệ thống chịu được ma sát thị trường thực tế trước khi vận hành live.
 ```
 
 ---
@@ -127,14 +132,27 @@ AI lựa chọn bộ tham số từ **Danh Mục Cấu Hình An Toàn Đã Đư�
 ## Chi Tiết Phase 10 — Walk-Forward Testing & Generalization Verification
 
 ### 1. Mục tiêu & Cấu trúc 4 Folds (Expanding Windows)
-- **Fold 1**: Train `2020–2021` | Out-of-Sample Test: `2022`
-- **Fold 2**: Train `2020–2022` | Out-of-Sample Test: `2023`
-- **Fold 3**: Train `2020–2023` | Out-of-Sample Test: `2024`
-- **Fold 4**: Train `2020–2024` | Out-of-Sample Test: `2025`
+- **Fold 1**: Train `2020–2021` | OOS Test `2022`
+- **Fold 2**: Train `2020–2022` | OOS Test `2023`
+- **Fold 3**: Train `2020–2023` | OOS Test `2024`
+- **Fold 4**: Train `2020–2024` | OOS Test `2025`
+- Tính chỉ số Walk-Forward Efficiency (WFE).
 
-### 2. Chỉ số Nghiệm Thu Khái Quát Hóa
-- **Walk-Forward Efficiency Ratio (WFE)**: $\frac{\text{Out-of-Sample Profit Factor}}{\text{In-Sample Profit Factor}} \ge 0.70$.
-- Kết nối đường cong tài sản Out-of-Sample thực tế của 4 năm 2022–2025.
+---
+
+## Chi Tiết Phase 11 — Monte Carlo / Stress Testing & Robustness Certification
+
+### 1. Mục tiêu Phá Vỡ Chiến Lược (Stress Testing)
+Bơm 5 yếu tố ma sát thực tế qua 500+ lượt Monte Carlo simulations:
+1. **Spread Variation**: $0.20 \to $0.80.
+2. **Slippage**: $0.05 \to $0.25.
+3. **Entry Delay**: 1–3 nến M1.
+4. **Exit Delay**: 1–2 nến M1.
+5. **DCA Execution Shock**: 5% nảy/không khớp lệnh.
+
+### 2. Tiêu chuẩn Cấp Robustness Certificate
+- 95th Percentile Worst Case Profit Factor $\ge 1.10$.
+- 95th Percentile Worst Case Max Drawdown $\le 25.0\%$.
 
 ---
 
@@ -200,6 +218,12 @@ python3 v6_system/test_phase10.py
 python3 v6_system/run_phase10.py
 ```
 
+### Phase 11: Monte Carlo / Stress Testing (500 Simulations)
+```bash
+python3 v6_system/test_phase11.py
+python3 v6_system/run_phase11.py
+```
+
 ### Output Files (`v6_system/output/`)
 - `daily_sessions_10_12.csv` (Dataset phiên Phase 1)
 - `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
@@ -220,3 +244,5 @@ python3 v6_system/run_phase10.py
 - `phase9_selection_distribution.csv` (Tần suất phân phối các cấu hình an toàn Phase 9)
 - `phase10_walk_forward_summary.json` (Báo cáo tổng hợp kiểm thử 4 Folds Walk-Forward Phase 10)
 - `phase10_oos_trades.csv` (Chi tiết nhật ký giao dịch Out-of-Sample thực tế 2022-2025 Phase 10)
+- `phase11_stress_test_report.json` (Báo cáo tổng hợp kết quả 500 lượt Monte Carlo Stress Test Phase 11)
+- `phase11_monte_carlo_distribution.csv` (Phân phối kết quả 500 lượt mô phỏng ma sát Phase 11)
