@@ -36,13 +36,34 @@ class MLGatekeeper:
 
     def __init__(self, random_state: int = 42):
         self.random_state = random_state
-        self.model = None
+        self._init_model()
+
+    def _init_model(self):
+        """Khởi tạo mô hình AI (XGBoost hoặc HistGradientBoosting)."""
+        if HAS_XGBOOST:
+            self.model = xgb.XGBClassifier(
+                n_estimators=100,
+                max_depth=5,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                n_jobs=-1,
+                random_state=self.random_state,
+                eval_metric="logloss"
+            )
+        else:
+            self.model = HistGradientBoostingClassifier(
+                max_iter=100,
+                max_depth=5,
+                learning_rate=0.05,
+                random_state=self.random_state
+            )
 
     def train_and_evaluate(self, df_features: pd.DataFrame, split_year: int = 2024) -> Tuple[Dict[str, Any], pd.DataFrame]:
         """
         Huấn luyện mô hình theo phân chia chuỗi thời gian (Time-Series Split):
-        - Train Set: Năm 2020 - 2023
-        - Test Set : Năm 2024 - 2025
+        - Train Set: Năm < split_year
+        - Test Set : Năm >= split_year
         """
         logger.info(f"Bắt đầu phân chia Dataset (Train < {split_year}, Test >= {split_year})...")
         
@@ -66,64 +87,47 @@ class MLGatekeeper:
 
         logger.info(f"Kích thước tập Train: {len(X_train):,} dòng | Test: {len(X_test):,} dòng.")
 
-        # Khởi tạo mô hình
-        if HAS_XGBOOST:
-            logger.info("Huấn luyện bằng mô hình XGBClassifier...")
-            self.model = xgb.XGBClassifier(
-                n_estimators=100,
-                max_depth=5,
-                learning_rate=0.05,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                n_jobs=-1,
-                random_state=self.random_state,
-                eval_metric="logloss"
-            )
-        else:
-            logger.info("Dùng HistGradientBoostingClassifier (Tối ưu hóa đa nhân siêu nhanh)...")
-            self.model = HistGradientBoostingClassifier(
-                max_iter=100,
-                max_depth=5,
-                learning_rate=0.05,
-                random_state=self.random_state
-            )
-
+        self._init_model()
         self.model.fit(X_train, y_train)
 
-        # Dự báo xác suất (Probability)
-        y_prob_test = self.model.predict_proba(X_test)[:, 1]
-        y_pred_test = (y_prob_test >= 0.5).astype(int)
+        probs_test = self.model.predict_proba(X_test)[:, 1]
+        test_df["prob_revert"] = probs_test
 
-        # Tính toán chỉ số đo lường ML
-        roc_auc = roc_auc_score(y_test, y_prob_test)
-        pr_auc = average_precision_score(y_test, y_prob_test)
-        precision = precision_score(y_test, y_pred_test, zero_division=0)
-        recall = recall_score(y_test, y_pred_test, zero_division=0)
-        f1 = f1_score(y_test, y_pred_test, zero_division=0)
+        roc_auc = float(roc_auc_score(y_test, probs_test))
+        pr_auc = float(average_precision_score(y_test, probs_test))
+        preds = (probs_test >= 0.5).astype(int)
 
-        # Feature Importance (Hoặc Permutation Importance nếu là HistGradientBoosting)
-        if hasattr(self.model, "feature_importances_"):
+        prec = float(precision_score(y_test, preds, zero_division=0))
+        rec = float(recall_score(y_test, preds, zero_division=0))
+        f1 = float(f1_score(y_test, preds, zero_division=0))
+
+        logger.info(f"Hoàn thành huấn luyện mô hình: ROC-AUC = {roc_auc:.4f}, PR-AUC = {pr_auc:.4f}.")
+
+        metrics = {
+            "roc_auc": round(roc_auc, 4),
+            "pr_auc": round(pr_auc, 4),
+            "precision": round(prec, 4),
+            "recall": round(rec, 4),
+            "f1": round(f1, 4),
+            "train_size": len(X_train),
+            "test_size": len(X_test)
+        }
+
+        return metrics, test_df
+
+    def get_feature_importance(self) -> pd.DataFrame:
+        """Lấy thứ hạng tầm quan trọng của 25 đặc trưng."""
+        if self.model is None:
+            return pd.DataFrame()
+
+        if HAS_XGBOOST and hasattr(self.model, "feature_importances_"):
             importances = self.model.feature_importances_
         else:
-            # Ước tính importance đơn giản cho HistGradientBoosting
-            importances = np.zeros(len(self.FEATURE_COLS))
+            importances = np.ones(len(self.FEATURE_COLS)) / len(self.FEATURE_COLS)
 
-        df_importance = pd.DataFrame({
+        df_imp = pd.DataFrame({
             "feature": self.FEATURE_COLS,
             "importance": importances
         }).sort_values("importance", ascending=False).reset_index(drop=True)
 
-        metrics = {
-            "model_name": "XGBoost V1 Gatekeeper" if HAS_XGBOOST else "HistGradientBoosting Fast Model",
-            "train_size": len(X_train),
-            "test_size": len(X_test),
-            "roc_auc": round(float(roc_auc), 4),
-            "pr_auc": round(float(pr_auc), 4),
-            "precision": round(float(precision), 4),
-            "recall": round(float(recall), 4),
-            "f1_score": round(float(f1), 4),
-            "positive_class_ratio_test": round(float(y_test.mean()), 4)
-        }
-
-        logger.info(f"Hoàn thành huấn luyện mô hình: ROC-AUC = {metrics['roc_auc']}, PR-AUC = {metrics['pr_auc']}.")
-        return metrics, df_importance
+        return df_imp
