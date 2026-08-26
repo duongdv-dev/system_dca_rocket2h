@@ -41,10 +41,15 @@ Phase 7: AI Filter & Empirical V0 vs V1+AI Comparison (Hoàn thành)
   └── So sánh đối chứng 7 chỉ số khoa học giữa Baseline V0 vs Strategy V1 + AI Filter.
   └── Đưa ra phán quyết chính thức: Giữ AI nếu cải thiện rõ rệt, hoặc DỪNG AI nếu không tạo edge mới.
 
-Phase 8: Adaptive DCA (Điều Khiển Tham Số Thích Ứng Theo AI) (Hoàn thành / Đang thực thi)
+Phase 8: Adaptive DCA (Điều Khiển Tham Số Thích Ứng Theo AI) (Hoàn thành)
   └── AI chủ động điều khiển tham số động theo 3 Chế độ Thị trường: Market A (P>=80%), Market B (60%<=P<80%), Market C (P<60% -> SKIP).
   └── Tích hợp Stop Loss cứng (Max Distance) khống chế hoàn toàn rủi ro Tail Risk.
   └── So sánh tổng thể hiệu năng Baseline V0 vs Static Plateau vs Adaptive DCA.
+
+Phase 9: AI Parameter Selection (Lựa Chọn Cấu Hình An Toàn Từ Pre-defined Grid) (Hoàn thành / Đang thực thi)
+  └── AI không tự tạo ra tham số ngẫu nhiên "điên rồ" (như Step=6.37).
+  └── AI lựa chọn bộ tham số tối ưu từ Danh Mục An Toàn Được Duyệt Trước (Strategy A, B, C, D) hoặc SKIP.
+  └── Đảm bảo tính an toàn 100% và khống chế tối đa rủi ro vận hành.
 ```
 
 ---
@@ -103,14 +108,19 @@ Mô hình AI **XGBoost V1** đóng vai trò làm Gatekeeper đưa ra xác suất
 ## Chi Tiết Phase 8 — Adaptive DCA (Điều Khiển Tham Số Thích Ứng Theo AI)
 
 ### 1. Mục tiêu
-Cho phép AI chủ động phân loại trạng thái thị trường và gán tham số động (`Step`, `Multiplier`, `Max DCA`, `Max Distance`, `Skip`):
+Cho phép AI chủ động phân loại trạng thái thị trường và gán tham số động theo 3 Chế độ Thị trường A, B, C.
 
-1. **Market A (Reversion Prob $\ge 80\%$)**:
-   - `Step = $4.0` | `Multiplier = 1.25` | `Max DCA = 6` | `Max Distance = $12.0`.
-2. **Market B (Reversion Prob $60\% \le P < 80\%$)**:
-   - `Step = $7.0` | `Multiplier = 1.10` | `Max DCA = 4` | `Max Distance = $15.0`.
-3. **Market C (Reversion Prob $P < 60\%$ / Trend)**:
-   - **SKIP (BỎ PHIÊN GIAO DỊCH)**.
+---
+
+## Chi Tiết Phase 9 — AI Parameter Selection (Lựa Chọn Cấu Hình An Toàn)
+
+### 1. Mục tiêu An Toàn
+AI lựa chọn bộ tham số từ **Danh Mục Cấu Hình An Toàn Đã Được Duyệt Trước (Pre-defined Safe Grid Menu)**:
+- **Strategy A (Aggressive Scalp)**: `Step $3.0 | Mult 1.05 | MaxDCA 4 | SL $10.0`
+- **Strategy B (Balanced Steady)**: `Step $5.0 | Mult 1.10 | MaxDCA 5 | SL $15.0`
+- **Strategy C (Conservative Wide)**: `Step $7.0 | Mult 1.15 | MaxDCA 5 | SL $18.0`
+- **Strategy D (Defensive Deep)**: `Step $10.0 | Mult 1.10 | MaxDCA 4 | SL $20.0`
+- **Option E (SKIP)**: Bỏ phiên khi xác suất $P < 0.55$.
 
 ---
 
@@ -164,6 +174,12 @@ python3 v6_system/test_phase8.py
 python3 v6_system/run_phase8.py
 ```
 
+### Phase 9: AI Parameter Selection (Safe Pre-defined Grid Menu)
+```bash
+python3 v6_system/test_phase9.py
+python3 v6_system/run_phase9.py
+```
+
 ### Output Files (`v6_system/output/`)
 - `daily_sessions_10_12.csv` (Dataset phiên Phase 1)
 - `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
@@ -180,3 +196,5 @@ python3 v6_system/run_phase8.py
 - `phase7_comparison_report.json` (Báo cáo so sánh đối chứng 7 chỉ số V0 vs V1+AI Phase 7)
 - `phase8_adaptive_summary.json` (Báo cáo tổng hợp hiệu năng Adaptive DCA Phase 8)
 - `phase8_comparison.csv` (Bảng so sánh 3 hệ thống V0 vs Static vs Adaptive Phase 8)
+- `phase9_grid_ai_summary.json` (Báo cáo tổng hợp hiệu năng Safe Grid AI Selector Phase 9)
+- `phase9_selection_distribution.csv` (Tần suất phân phối các cấu hình an toàn được AI chọn Phase 9)
