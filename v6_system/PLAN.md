@@ -36,10 +36,15 @@ Phase 6: Advanced AI Labeling System (Xây Label cho AI) (Hoàn thành)
   └── Hỗ trợ 3 bộ nhãn chuyên sâu: y_anchor, y_basket_tp, y_safe_revert.
   └── So sánh hiệu năng dự báo mô hình AI Gatekeeper trên từng loại nhãn.
 
-Phase 7: AI Filter & Empirical V0 vs V1+AI Comparison (Hoàn thành / Đang thực thi)
+Phase 7: AI Filter & Empirical V0 vs V1+AI Comparison (Hoàn thành)
   └── Tích hợp mô hình AI Filter kiểm soát xác suất P(reversion) >= Threshold trước khi mở lệnh DCA.
   └── So sánh đối chứng 7 chỉ số khoa học giữa Baseline V0 vs Strategy V1 + AI Filter.
   └── Đưa ra phán quyết chính thức: Giữ AI nếu cải thiện rõ rệt, hoặc DỪNG AI nếu không tạo edge mới.
+
+Phase 8: Adaptive DCA (Điều Khiển Tham Số Thích Ứng Theo AI) (Hoàn thành / Đang thực thi)
+  └── AI chủ động điều khiển tham số động theo 3 Chế độ Thị trường: Market A (P>=80%), Market B (60%<=P<80%), Market C (P<60% -> SKIP).
+  └── Tích hợp Stop Loss cứng (Max Distance) khống chế hoàn toàn rủi ro Tail Risk.
+  └── So sánh tổng thể hiệu năng Baseline V0 vs Static Plateau vs Adaptive DCA.
 ```
 
 ---
@@ -83,32 +88,29 @@ Mô hình AI **XGBoost V1** đóng vai trò làm Gatekeeper đưa ra xác suất
 ## Chi Tiết Phase 6 — Advanced AI Labeling System (Xây Label cho AI)
 
 ### 1. Mục tiêu & Quy tắc Gán Nhãn
-- **KHÔNG TRAIN**: Nến tiếp theo tăng/giảm.
-- **TRAIN CHÍNH XÁC**:
-  - `Y = 1`: Giá đạt basket TP / quay về Anchor trước 12:00 VN.
-  - `Y = 0`: Không đạt trước 12:00 VN.
+- `Y = 1`: Giá đạt basket TP / quay về Anchor trước 12:00 VN.
+- `Y = 0`: Không đạt trước 12:00 VN.
 
 ---
 
 ## Chi Tiết Phase 7 — AI Filter & Empirical V0 vs V1+AI Comparison
 
 ### 1. Mục tiêu & Cơ chế AI Filter
-- Khi xuất hiện tín hiệu DCA, AI kiểm tra xác suất $P(\text{reversion}) \ge \text{Threshold}$.
-- Nếu $P \ge \text{Threshold}$ -> Cho phép DCA.
-- Nếu $P < \text{Threshold}$ -> Chặn / Không DCA thêm.
+Đánh giá thực nghiệm 7 tiêu chí khoa học giữa Baseline V0 vs V1 + AI Filter.
 
-### 2. Bảy Câu Hỏi Kiểm Chứng Thực Nghiệm
-1. AI có Tăng Profit Factor?
-2. AI có Giảm Drawdown?
-3. AI có Giảm Max DCA?
-4. AI có Giảm Losing Days?
-5. AI có Giảm Tail Risk (Worst Month / Worst Day)?
-6. AI có Tăng Average Profit?
-7. AI có Giảm Số Lần Force Close 12:00?
+---
 
-### 3. Phán Quyết Khoa Học
-- Đạt $\ge 4/7$ tiêu chuẩn -> Giữ mô hình AI Filter.
-- Đạt $< 4/7$ tiêu chuẩn -> **DỪNG AI TẠI ĐÂY**, không cố nhồi AI vào chiến lược.
+## Chi Tiết Phase 8 — Adaptive DCA (Điều Khiển Tham Số Thích Ứng Theo AI)
+
+### 1. Mục tiêu
+Cho phép AI chủ động phân loại trạng thái thị trường và gán tham số động (`Step`, `Multiplier`, `Max DCA`, `Max Distance`, `Skip`):
+
+1. **Market A (Reversion Prob $\ge 80\%$)**:
+   - `Step = $4.0` | `Multiplier = 1.25` | `Max DCA = 6` | `Max Distance = $12.0`.
+2. **Market B (Reversion Prob $60\% \le P < 80\%$)**:
+   - `Step = $7.0` | `Multiplier = 1.10` | `Max DCA = 4` | `Max Distance = $15.0`.
+3. **Market C (Reversion Prob $P < 60\%$ / Trend)**:
+   - **SKIP (BỎ PHIÊN GIAO DỊCH)**.
 
 ---
 
@@ -156,6 +158,12 @@ python3 v6_system/test_phase7.py
 python3 v6_system/run_phase7.py
 ```
 
+### Phase 8: Adaptive DCA
+```bash
+python3 v6_system/test_phase8.py
+python3 v6_system/run_phase8.py
+```
+
 ### Output Files (`v6_system/output/`)
 - `daily_sessions_10_12.csv` (Dataset phiên Phase 1)
 - `clean_m1_2020_2025.csv` (Dataset M1 sạch Phase 1)
@@ -170,3 +178,5 @@ python3 v6_system/run_phase7.py
 - `phase6_label_analysis.json` (Báo cáo so sánh hiệu năng AI trên 3 loại nhãn Phase 6)
 - `phase6_features_labeled.csv` (Dataset đặc trưng và 3 loại nhãn AI Phase 6)
 - `phase7_comparison_report.json` (Báo cáo so sánh đối chứng 7 chỉ số V0 vs V1+AI Phase 7)
+- `phase8_adaptive_summary.json` (Báo cáo tổng hợp hiệu năng Adaptive DCA Phase 8)
+- `phase8_comparison.csv` (Bảng so sánh 3 hệ thống V0 vs Static vs Adaptive Phase 8)
