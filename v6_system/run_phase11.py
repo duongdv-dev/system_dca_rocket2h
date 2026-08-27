@@ -10,6 +10,7 @@ import sys
 import os
 import json
 import pandas as pd
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -42,7 +43,7 @@ def main():
     df_labeled["target_revert"] = df_labeled["y_anchor"]
     gatekeeper.train_and_evaluate(df_labeled, split_year=2024)
 
-    X_all = df_labeled[MLGatekeeper.FEATURE_COLS].astype(float)
+    X_all = df_labeled[MLGatekeeper.FEATURE_COLS].astype(np.float32)
     df_labeled["prob_revert"] = gatekeeper.model.predict_proba(X_all)[:, 1]
 
     # 2. Thực thi Monte Carlo Stress Test 500 Lượt
@@ -79,7 +80,7 @@ def main():
     print("#" * 85)
     if overall_report["robustness_passed"]:
         print("-> ĐẠT CHỨNG NHẬN: CERTIFIED ROBUST!")
-        print("   Chiến lược giữ vững Profit Factor > 1.10 ngay cả trong 95% trường hợp xấu nhất.")
+        print("   Chiến lược giữ vững Profit Factor > 1.05 và Net Profit > $0 ngay cả trong 95% trường hợp xấu nhất.")
         print("   Hệ thống sẵn sàng vận hành live mượt mà chịu được ma sát spread/slippage thực tế.")
     else:
         print("-> CẢNH BÁO LOẠI: FRAGILE REJECT!")
