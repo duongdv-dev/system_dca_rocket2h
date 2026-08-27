@@ -2,7 +2,7 @@ x-base-service: &base-service
   build:
     context: .
     dockerfile: Dockerfile
-  image: xauusd-grid-v3:latest
+  image: xauusd-grid-v6:latest
   volumes:
     - .:/app
   environment:
@@ -10,26 +10,26 @@ x-base-service: &base-service
     - PYTHONDONTWRITEBYTECODE=1
 
 services:
-  # Service chính: Pipeline Walk-Forward 2020-2025 nâng cấp
-  app:
+  # Service Version 6 Phase 11: Monte Carlo Stress Test & Robustness Certification
+  v6_phase11:
     <<: *base-service
-    container_name: xauusd_grid_v3_main
-    command: python -u v3_system/run_v3_advanced_training_pipeline.py
+    container_name: xauusd_v6_phase11
+    command: python -u v6_system/run_phase11.py
 
-  # Service V4 Mới: Chiến Lược 1 Lệnh Duy Nhất (Non-DCA Asian ORB Breakout 2020-2025)
+  # Service Version 6 Phase 10: Walk-Forward Testing (Expanding Windows)
+  v6_phase10:
+    <<: *base-service
+    container_name: xauusd_v6_phase10
+    command: python -u v6_system/run_phase10.py
+
+  # Service Version 6 Phase 9: AI Parameter Selection (Safe Grid Menu)
+  v6_phase9:
+    <<: *base-service
+    container_name: xauusd_v6_phase9
+    command: python -u v6_system/run_phase9.py
+
+  # Service V4: Non-DCA Asian ORB Breakout 2020-2025
   v4_single_trade:
     <<: *base-service
     container_name: xauusd_single_trade_v4
     command: python -u v4_system/run_v4_backtest_2020_2025.py
-
-  # Service phụ: Backtest 6 tháng cuối 2020 OOS
-  v3_h2_2020_oos:
-    <<: *base-service
-    container_name: xauusd_grid_v3_h2_2020_oos
-    command: python -u v3_system/run_h2_2020_oos_v3.py
-
-  # Service phụ: Backtest v2 legacy
-  v2_pipeline:
-    <<: *base-service
-    container_name: xauusd_grid_v2_pipeline
-    command: python -u v2_system/main_pipeline.py
